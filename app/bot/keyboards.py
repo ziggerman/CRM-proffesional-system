@@ -35,9 +35,10 @@ def get_start_keyboard() -> InlineKeyboardMarkup:
     builder.add(InlineKeyboardButton(text="📋 Leads",      callback_data="goto_leads"))
     builder.add(InlineKeyboardButton(text="💰 Sales",      callback_data="goto_sales"))
     builder.add(InlineKeyboardButton(text="➕ New Lead",   callback_data="goto_newlead"))
+    builder.add(InlineKeyboardButton(text="📋 Paste Lead",callback_data="goto_paste_lead"))
     builder.add(InlineKeyboardButton(text="🔍 Search",     callback_data="goto_search"))
     builder.add(InlineKeyboardButton(text="⚙️ Settings",   callback_data="goto_settings"))
-    builder.adjust(2, 2, 2)
+    builder.adjust(2, 2, 3)
     return builder.as_markup()
 
 
@@ -47,10 +48,30 @@ def get_menu_keyboard() -> InlineKeyboardMarkup:
     builder.add(InlineKeyboardButton(text="📊 Dashboard",  callback_data="goto_dashboard"))
     builder.add(InlineKeyboardButton(text="📋 Leads",      callback_data="goto_leads"))
     builder.add(InlineKeyboardButton(text="➕ New Lead",   callback_data="goto_newlead"))
+    builder.add(InlineKeyboardButton(text="📋 Paste Lead",callback_data="goto_paste_lead"))
     builder.add(InlineKeyboardButton(text="🔍 Search",     callback_data="goto_search"))
     builder.add(InlineKeyboardButton(text="⚡ Quick",      callback_data="goto_quick"))
     builder.add(InlineKeyboardButton(text="⚙️ Settings",   callback_data="goto_settings"))
-    builder.adjust(2, 2, 2)
+    builder.adjust(2, 2, 3)
+    return builder.as_markup()
+
+
+def get_paste_lead_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for paste lead flow."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="📋 Paste Lead Data", callback_data="start_paste_lead"))
+    builder.add(InlineKeyboardButton(text="❌ Cancel", callback_data="goto_menu"))
+    builder.adjust(1, 1)
+    return builder.as_markup()
+
+
+def get_paste_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation keyboard after parsing pasted data."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="✅ Create Lead", callback_data="paste_create"))
+    builder.add(InlineKeyboardButton(text="✏️ Edit", callback_data="paste_edit"))
+    builder.add(InlineKeyboardButton(text="❌ Cancel", callback_data="goto_menu"))
+    builder.adjust(1, 1, 1)
     return builder.as_markup()
 
 

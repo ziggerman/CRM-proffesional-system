@@ -10,7 +10,8 @@ from typing import Optional
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot.config import bot_settings
 from app.bot.keyboards import (
@@ -43,8 +44,9 @@ from app.bot.keyboards import (
     get_sale_detail_keyboard,
     get_edit_sale_stage_keyboard,
 )
-from app.bot.states import LeadCreationState, AddNoteState, SearchState, SaleManagementState
+from app.bot.states import LeadCreationState, LeadPasteState, AddNoteState, SearchState, SaleManagementState
 from app.bot import ui
+from app.bot.keyboards import get_paste_lead_keyboard, get_paste_confirm_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -1603,6 +1605,255 @@ async def finalize_lead_creation(callback: CallbackQuery, state: FSMContext):
         await safe_edit(callback, text, builder.as_markup())
     else:
         await safe_edit(callback, ui.format_error("Failed to create lead."), get_retry_keyboard("goto_newlead", "goto_menu"))
+
+
+# ─────────────────────────────────────────────────────────────
+# Paste Lead Flow (NEW FEATURE)
+# ─────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "goto_paste_lead")
+async def goto_paste_lead(callback: CallbackQuery, state: FSMContext):
+    """Navigate to paste lead menu."""
+    await safe_edit(
+        callback,
+        "📋 <b>PASTE LEAD DATA</b>\n\n"
+        "Ви можете вставити скопійовану інформацію про ліда одним текстом.\n\n"
+        "Формат (підтримуються різні варіанти):\n"
+        "• <code>Ім'я: Джон Doe\nEmail: john@example.com\nТелефон: +380501234567</code>\n"
+        "• <code>Джон Doe | john@example.com | +380501234567</code>\n"
+        "• Або просто ім'я і контакти\n\n"
+        "<i>Натисніть кнопку нижче щоб почати.</i>",
+        get_paste_lead_keyboard()
+    )
+
+
+@router.callback_query(F.data == "start_paste_lead")
+async def start_paste_lead(callback: CallbackQuery, state: FSMContext):
+    """Start paste lead flow - ask for data."""
+    await state.set_state(LeadPasteState.waiting_for_pasted_data)
+    await safe_edit(
+        callback,
+        "📋 <b>ВСТАВТЕ ДАНІ ЛІДА</b>\n\n"
+        "Вставте весь текст з інформацією про ліда.\n\n"
+        "Приклад:\n"
+        "<code>Ім'я: Олександр Петренко\n"
+        "Email: alex@company.ua\n"
+        "Телефон: +380674445566\n"
+        "Компанія: ТОВ \"УкрТех\"\n"
+        "Посада: Директор</code>\n\n"
+        "Натисніть /cancel для скасування.",
+        get_back_keyboard("goto_menu")
+    )
+
+
+@router.message(LeadPasteState.waiting_for_pasted_data)
+async def handle_pasted_data(message: Message, state: FSMContext):
+    """Parse pasted text and extract lead data."""
+    text = message.text or ""
+    if not text:
+        await message.answer("⚠️ Будь ласка, вставте текст з даними ліда.")
+        return
+    
+    # Parse the text - try different formats
+    parsed = _parse_lead_text(text)
+    
+    if not parsed.get("full_name") and not parsed.get("email") and not parsed.get("phone"):
+        await message.answer(
+            "⚠️ Не вдалося розпізнати дані. Будь ласка, переконайтеся, що текст містить:\n"
+            "• Ім'я або назву компанії\n"
+            "• Email або телефон\n\n"
+            "Спробуйте ще раз або натисніть /cancel"
+        )
+        return
+    
+    # Save parsed data to state
+    await state.update_data(pasted_lead_data=parsed)
+    await state.set_state(LeadPasteState.waiting_for_confirm)
+    
+    # Show parsed data for confirmation
+    name = parsed.get("full_name", "—")
+    email = parsed.get("email", "—")
+    phone = parsed.get("phone", "—")
+    company = parsed.get("company", "—")
+    position = parsed.get("position", "—")
+    
+    confirm_text = (
+        f"📋 <b>РОЗПІЗНАНІ ДАНІ</b>\n\n"
+        f"👤 <b>Ім'я:</b> {name}\n"
+        f"📧 <b>Email:</b> {email}\n"
+        f"📞 <b>Телефон:</b> {phone}\n"
+        f"🏢 <b>Компанія:</b> {company}\n"
+        f"👔 <b>Посада:</b> {position}\n\n"
+        "<i>Підтвердіть або виправте дані.</i>"
+    )
+    
+    await message.answer(confirm_text, reply_markup=get_paste_confirm_keyboard(), parse_mode="HTML")
+
+
+def _parse_lead_text(text: str) -> dict:
+    """Parse various text formats into lead data."""
+    import re
+    
+    result = {
+        "full_name": None,
+        "email": None,
+        "phone": None,
+        "company": None,
+        "position": None,
+    }
+    
+    # Try to find email
+    email_pattern = r'[\w\.-]+@[\w\.-]+\.\w+'
+    email_match = re.search(email_pattern, text)
+    if email_match:
+        result["email"] = email_match.group()
+    
+    # Try to find phone (various formats)
+    phone_patterns = [
+        r'\+?380\d{9}',  # +380501234567
+        r'\+?\d{10,12}',  # 380501234567 or 0501234567
+        r'\(\d{3}\)\s?\d{3}[-\s]?\d{2}[-\s]?\d{2}',  # (050) 123-45-67
+    ]
+    for pattern in phone_patterns:
+        phone_match = re.search(pattern, text)
+        if phone_match:
+            result["phone"] = phone_match.group()
+            break
+    
+    # Try to find name (first line or after "Ім'я:" / "Name:")
+    lines = text.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Check for labeled name
+        name_patterns = [
+            r'Ім.*?[:\-]\s*(.+)',
+            r'Name[:\-]\s*(.+)',
+            r'ПІП[:\-]\s*(.+)',
+        ]
+        for pattern in name_patterns:
+            match = re.search(pattern, line, re.IGNORECASE)
+            if match:
+                result["full_name"] = match.group(1).strip()
+                break
+        
+        if not result["full_name"]:
+            # Check for company
+            company_patterns = [
+                r'Компан.*?[:\-]\s*(.+)',
+                r'Company[:\-]\s*(.+)',
+                r'Організац.*?[:\-]\s*(.+)',
+            ]
+            for pattern in company_patterns:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    result["company"] = match.group(1).strip()
+                    break
+            
+            # Check for position
+            position_patterns = [
+                r'Посада[:\-]\s*(.+)',
+                r'Position[:\-]\s*(.+)',
+                r'Посада[:\-]\s*(.+)',
+            ]
+            for pattern in position_patterns:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    result["position"] = match.group(1).strip()
+                    break
+    
+    # If no structured name found, try to get first meaningful line as name
+    if not result["full_name"]:
+        for line in lines:
+            line = line.strip()
+            # Skip lines that look like email, phone, or labels
+            if line and not re.match(r'^[\w\.-]+@', line, re.IGNORECASE) and \
+               not re.match(r'^\+?[\d\s\-\(\)]+$', line) and \
+               not re.match(r'^(Ім|Name|Email|Телефон|Phone|Company|Kомпан)', line, re.IGNORECASE):
+                result["full_name"] = line
+                break
+    
+    # If the text is pipe-separated (like "Name | Email | Phone")
+    if '|' in text:
+        parts = [p.strip() for p in text.split('|')]
+        if len(parts) >= 1 and not result["full_name"]:
+            result["full_name"] = parts[0]
+        if len(parts) >= 2 and not result["email"]:
+            result["email"] = parts[1]
+        if len(parts) >= 3 and not result["phone"]:
+            result["phone"] = parts[2]
+    
+    return result
+
+
+@router.callback_query(F.data == "paste_create", LeadPasteState.waiting_for_confirm)
+async def confirm_paste_lead(callback: CallbackQuery, state: FSMContext):
+    """Create lead from pasted data."""
+    data = await state.get_data()
+    lead_data = data.get("pasted_lead_data", {})
+    
+    if not lead_data:
+        await callback.answer("Дані не знайдені. Спробуйте ще раз.", show_alert=True)
+        await state.clear()
+        return
+    
+    await callback.answer("Створюю ліда...")
+    
+    # Add default source
+    lead_data["source"] = "MANUAL"
+    lead_data["telegram_id"] = str(callback.from_user.id)
+    
+    lead = await _api_post("/api/v1/leads", lead_data, user_id=callback.from_user.id)
+    await state.clear()
+    
+    if lead and "error" not in lead:
+        text = (
+            f"✅ <b>Lead Created!</b>\n\n"
+            f"<b>ID:</b>  #{lead['id']}\n"
+            f"<b>Name:</b> {lead.get('full_name')}\n"
+            f"<b>Stage:</b> {ui.fmt_stage(lead.get('stage'))}\n\n"
+            f"<i>Tap below to view or manage this lead.</i>"
+        )
+        builder = InlineKeyboardBuilder()
+        builder.add(InlineKeyboardButton(text=f"📄 Open Lead #{lead['id']}", callback_data=f"lvw{lead['id']}"))
+        builder.add(InlineKeyboardButton(text="🏠 Main Menu", callback_data="goto_menu"))
+        builder.adjust(1)
+        await safe_edit(callback, text, builder.as_markup())
+    else:
+        error_msg = lead.get("detail", "Unknown error") if lead else "API error"
+        await safe_edit(callback, ui.format_error(f"Failed to create lead: {error_msg}"), get_back_keyboard("goto_paste_lead"))
+
+
+@router.callback_query(F.data == "paste_edit", LeadPasteState.waiting_for_confirm)
+async def edit_paste_lead(callback: CallbackQuery, state: FSMContext):
+    """Go back to editing - restart the full lead creation flow."""
+    data = await state.get_data()
+    lead_data = data.get("pasted_lead_data", {})
+    
+    # Start the full lead creation flow with pre-filled data
+    await state.set_state(LeadCreationState.waiting_for_source)
+    
+    # Pre-fill with parsed data if available
+    if lead_data.get("source"):
+        await state.update_data(
+            source=lead_data.get("source", "MANUAL"),
+            full_name=lead_data.get("full_name"),
+            email=lead_data.get("email"),
+            phone=lead_data.get("phone"),
+            company=lead_data.get("company"),
+            position=lead_data.get("position"),
+        )
+    
+    await safe_edit(
+        callback,
+        "✏️ <b>РЕДАГУВАННЯ ЛІДА</b>\n\n"
+        "Дані розпізнані. Тепер ви можете заповнити форму крок за кроком,\n"
+        "або натиснути /start для скасування.\n\n"
+        "<i>Поточні дані збережені. Продовжуємо з форми...</i>",
+        get_back_keyboard("goto_menu")
+    )
 
 
 # ─────────────────────────────────────────────────────────────

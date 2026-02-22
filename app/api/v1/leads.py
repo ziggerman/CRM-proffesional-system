@@ -168,12 +168,59 @@ async def delete_lead(
     svc: LeadService = Depends(get_lead_service),
     _ = Depends(require_role("admin"))
 ):
-    """Delete a lead completely."""
+    """Soft delete a lead (marks as deleted, preserves history)."""
+    from app.core.security import get_current_user
     try:
         lead = await svc.get_lead(lead_id)
-        await svc.repo.delete(lead)
+        # Get current user for audit
+        current_user = get_current_user.__self__ if hasattr(get_current_user, '__self__') else None
+        deleted_by = str(current_user) if current_user else "Admin"
+        await svc.repo.delete(lead, deleted_by=deleted_by)
+        await svc.repo.db.commit()
     except LeadNotFoundError:
         _not_found(lead_id)
+
+
+@router.post("/{lead_id}/restore", response_model=LeadResponse)
+async def restore_lead(
+    lead_id: int,
+    svc: LeadService = Depends(get_lead_service),
+    _ = Depends(require_role("admin"))
+):
+    """Restore a soft-deleted lead."""
+    try:
+        lead = await svc.repo.get_by_id(lead_id)
+        if not lead:
+            _not_found(lead_id)
+        if not lead.is_deleted:
+            raise HTTPException(status_code=400, detail="Lead is not deleted")
+        await svc.repo.restore(lead)
+        await svc.repo.db.commit()
+        return lead
+    except LeadNotFoundError:
+        _not_found(lead_id)
+
+
+@router.get("/deleted", response_model=dict)
+async def list_deleted_leads(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    svc: LeadService = Depends(get_lead_service),
+    _ = Depends(require_role("admin"))
+):
+    """List soft-deleted leads (Admin only)."""
+    offset = (page - 1) * page_size
+    items, total = await svc.repo.get_deleted_leads(offset=offset, limit=page_size)
+    total_pages = (total + page_size - 1) // page_size
+    
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_next": page < total_pages,
+        "has_prev": page > 1,
+    }
 
 
 @router.get("/{lead_id}/history", response_model=list[LeadHistoryResponse])

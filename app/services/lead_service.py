@@ -84,9 +84,12 @@ class LeadService:
         
         return lead
 
-    async def get_lead(self, lead_id: int) -> Lead:
+    async def get_lead(self, lead_id: int, include_deleted: bool = False) -> Lead:
         lead = await self.repo.get_by_id(lead_id)
         if not lead:
+            raise LeadNotFoundError(f"Lead {lead_id} not found")
+        # By default, don't return deleted leads
+        if not include_deleted and lead.is_deleted:
             raise LeadNotFoundError(f"Lead {lead_id} not found")
         return lead
 

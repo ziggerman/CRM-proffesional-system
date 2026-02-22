@@ -17,6 +17,12 @@ class LeadCreationState(StatesGroup):
     confirm = State()
 
 
+class LeadPasteState(StatesGroup):
+    """States for pasting lead info in one go."""
+    waiting_for_pasted_data = State()
+    waiting_for_confirm = State()
+
+
 class AddNoteState(StatesGroup):
     """States for the add-note flow (triggered from lead detail)."""
     waiting_for_text = State()     # user types note text

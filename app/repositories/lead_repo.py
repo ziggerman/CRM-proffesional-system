@@ -23,13 +23,15 @@ class LeadRepository:
         await self.db.refresh(lead)
         return lead
     
-    async def get_by_id(self, lead_id: int) -> Optional[Lead]:
+    async def get_by_id(self, lead_id: int, include_deleted: bool = False) -> Optional[Lead]:
         """Get lead by ID."""
-        result = await self.db.execute(
-            select(Lead)
-            .options(selectinload(Lead.sale))
-            .where(Lead.id == lead_id)
-        )
+        stmt = select(Lead).options(selectinload(Lead.sale)).where(Lead.id == lead_id)
+        
+        # Soft delete filter - by default don't return deleted leads
+        if not include_deleted:
+            stmt = stmt.where(Lead.is_deleted == False)
+        
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
     
     async def get_all(
@@ -44,12 +46,17 @@ class LeadRepository:
         created_before: Optional[datetime] = None,
         offset: int = 0,
         limit: int = 50,
+        include_deleted: bool = False,
     ) -> tuple[list[Lead], int]:
         """Get leads with optional filtering and pagination."""
         from sqlalchemy import String, or_, func
         
         # Base statement for both count and results
         stmt = select(Lead)
+
+        # Soft delete filter - by default exclude deleted leads
+        if not include_deleted:
+            stmt = stmt.where(Lead.is_deleted == False)
 
         if stage:
             stmt = stmt.where(Lead.stage == stage)
@@ -101,10 +108,43 @@ class LeadRepository:
         await self.db.refresh(lead)
         return lead
     
-    async def delete(self, lead: Lead) -> None:
-        """Delete a lead."""
-        await self.db.delete(lead)
+    async def delete(self, lead: Lead, deleted_by: str = "System") -> None:
+        """Soft delete a lead - marks as deleted without removing from DB."""
+        lead.is_deleted = True
+        lead.deleted_at = datetime.now(UTC)
+        lead.deleted_by = deleted_by
         await self.db.flush()
+
+    async def restore(self, lead: Lead) -> None:
+        """Restore a soft-deleted lead."""
+        lead.is_deleted = False
+        lead.deleted_at = None
+        lead.deleted_by = None
+        await self.db.flush()
+
+    async def get_deleted_leads(self, offset: int = 0, limit: int = 50) -> tuple[list[Lead], int]:
+        """Get soft-deleted leads (for admin restore UI)."""
+        from sqlalchemy import func
+        
+        stmt = select(Lead).where(Lead.is_deleted == True)
+        
+        # Total count
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        count_result = await self.db.execute(count_stmt)
+        total = count_result.scalar() or 0
+
+        # Paginated results
+        stmt = stmt.options(
+            selectinload(Lead.sale), 
+            selectinload(Lead.notes),
+            selectinload(Lead.attachments)
+        )
+        stmt = stmt.offset(offset).limit(limit).order_by(Lead.deleted_at.desc())
+        
+        result = await self.db.execute(stmt)
+        leads = list(result.scalars().all())
+
+        return leads, total
 
     async def get_stale_leads(self, days: int = 7) -> list[Lead]:
         """Get leads in NEW or CONTACTED stages with no updates for N days."""
@@ -113,6 +153,7 @@ class LeadRepository:
         
         stmt = (
             select(Lead)
+            .where(Lead.is_deleted == False)  # Exclude deleted leads
             .where(Lead.stage.in_([ColdStage.NEW, ColdStage.CONTACTED]))
             .where(Lead.updated_at <= cutoff)
             .order_by(Lead.updated_at.asc())

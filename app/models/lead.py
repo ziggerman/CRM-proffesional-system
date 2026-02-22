@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from datetime import datetime, UTC
 
 
-from sqlalchemy import String, Float, Integer, DateTime, Enum as SAEnum, ForeignKey
+from sqlalchemy import String, Float, Integer, DateTime, Enum as SAEnum, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.base import Base
@@ -101,6 +101,11 @@ class Lead(Base):
     
     # Activity metrics
     message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Soft delete fields
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # AI fields — stored for auditability
     ai_score: Mapped[float | None] = mapped_column(Float, nullable=True)

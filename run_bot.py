@@ -1,8 +1,15 @@
 import asyncio
 import logging
 import sys
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+
+# Load environment variables
+env_path = Path(__file__).parent / ".env"
+load_dotenv(env_path)
 
 from app.bot.config import bot_settings
 from app.bot.handlers import router as handlers_router

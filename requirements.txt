@@ -19,6 +19,9 @@ prometheus-fastapi-instrumentator>=6.1.0
 # OpenAI
 openai>=1.10.0
 
+# Voice Transcription (FREE local transcription)
+faster-whisper>=0.10.0
+
 # Redis for caching
 redis>=5.0.0
 

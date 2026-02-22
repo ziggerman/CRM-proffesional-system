@@ -26,24 +26,14 @@ SALE_STAGE_META = {
 }
 
 SOURCE_META = {
-    "WEB":          {"emoji": "🌐", "label": "Website",     "desc": "Заявка надійшла через контактну форму сайту."},
-    "REFERRAL":     {"emoji": "🤝", "label": "Referral",    "desc": "Ліда порекомендував існуючий клієнт або партнер."},
-    "SOCIAL":       {"emoji": "📱", "label": "Social",      "desc": "Залучено через соцмережі (Instagram, LinkedIn)."},
-    "MANUAL":       {"emoji": "✏️", "label": "Manual",      "desc": "Додано менеджером вручну під час холодного обдзвону."},
+    # ТЗ: scanner / partner / manual
     "SCANNER":      {"emoji": "🔍", "label": "Scanner",     "desc": "Лід знайдений через сканер або парсинг."},
     "PARTNER":      {"emoji": "🤝", "label": "Partner",     "desc": "Лід від партнера або реферальної програми."},
-    "REGISTRATION": {"emoji": "📝", "label": "Registration","desc": "Реєстрація на сайті або захід."},
-    "CALLBACK":     {"emoji": "📞", "label": "Callback",    "desc": "Замовлено зворотний дзвінок."},
-    "LEAD_MAGNET": {"emoji": "🎁", "label": "Lead Magnet","desc": "Отримано через безкоштовний ресурс/гід."},
-    "MESSAGE":      {"emoji": "💬", "label": "Message",     "desc": "Лід надійшов через повідомлення."},
+    "MANUAL":       {"emoji": "✏️", "label": "Manual",      "desc": "Додано менеджером вручну під час холодного обдзвону."},
 }
 
 DOMAIN_META = {
-    "RETAIL":     {"emoji": "🛍", "label": "Retail",     "desc": "Роздрібна торгівля та e-commerce."},
-    "FINANCE":    {"emoji": "🏦", "label": "Finance",    "desc": "Банки, крипта або фінансові консультанти."},
-    "TECHNOLOGY": {"emoji": "💻", "label": "Technology", "desc": "IT-продукти, SaaS та розробка програмного забезпечення."},
-    "HEALTHCARE": {"emoji": "🏥", "label": "Healthcare", "desc": "Медичні центри, клініки та послуги здоров'я."},
-    "OTHER":      {"emoji": "🏢", "label": "Other",      "desc": "Інші сфери бізнесу."},
+    # ТЗ: first / second / third
     "FIRST":      {"emoji": "1️⃣", "label": "First",      "desc": "Перша категорія бізнесу."},
     "SECOND":     {"emoji": "2️⃣", "label": "Second",     "desc": "Друга категорія бізнесу."},
     "THIRD":      {"emoji": "3️⃣", "label": "Third",      "desc": "Третя категорія бізнесу."},
@@ -414,13 +404,6 @@ def format_delete_confirm(lead_id) -> str:
     )
 
 
-def format_lead_creation_step(step: str, title: str, description: str) -> str:
-    """Generic step formatter for lead creation."""
-    return (
-        f"➕ <b>NEW LEAD</b> — Step {step}\n\n"
-        f"<b>{title}</b>\n"
-        f"<i>{description}</i>"
-    )
 
 
 def format_lead_confirm_card(data: dict) -> str:

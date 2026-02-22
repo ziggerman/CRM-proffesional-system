@@ -4,13 +4,15 @@ Uses ui.py for all message formatting and keyboards.py for all keyboards.
 """
 import logging
 import os
+import re
 from io import BytesIO
 from typing import Optional
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot.config import bot_settings
@@ -43,8 +45,19 @@ from app.bot.keyboards import (
     get_sales_list_keyboard,
     get_sale_detail_keyboard,
     get_edit_sale_stage_keyboard,
+    # Lead creation keyboards
+    get_name_keyboard,
+    get_email_keyboard,
+    get_phone_keyboard,
+    get_username_keyboard,
+    get_intent_keyboard,
+    get_qualification_keyboard,
+    get_lead_confirm_keyboard,
+    get_notes_manage_keyboard,
+    get_note_view_keyboard,
+    get_note_confirm_keyboard,
 )
-from app.bot.states import LeadCreationState, LeadPasteState, AddNoteState, SearchState, SaleManagementState
+from app.bot.states import LeadCreationState, LeadPasteState, AddNoteState, SearchState, SaleManagementState, AIAssistantState, VoiceChatState
 from app.bot import ui
 from app.bot.keyboards import get_paste_lead_keyboard, get_paste_confirm_keyboard
 
@@ -322,8 +335,8 @@ async def cmd_start(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     await message.answer(
-        "📋 <b>Choose where to start:</b>",
-        reply_markup=get_start_keyboard(),
+        "📋 <b>Choose where to start:</b>\n\n"
+        "Use the menu buttons below for quick navigation.",
         parse_mode="HTML"
     )
 
@@ -333,8 +346,9 @@ async def cmd_start(message: Message, state: FSMContext):
 async def cmd_menu(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "📋 <b>MAIN MENU</b>\n\nChoose an option:",
-        reply_markup=get_menu_keyboard(),
+        "📋 <b>MAIN MENU</b>\n\n"
+        "Navigate using the menu buttons below:",
+        reply_markup=get_main_menu_keyboard(),
         parse_mode="HTML"
     )
 
@@ -393,6 +407,62 @@ async def cmd_new_lead(message: Message, state: FSMContext):
     )
 
 
+@router.message(F.text == "🎤 Voice")
+async def cmd_voice(message: Message, state: FSMContext):
+    # Clear any other States but set voice chat mode
+    await state.clear()
+    await state.set_state(VoiceChatState.active)
+    await message.answer(
+        "🎤 <b>Голосовий чат УВІМКНЕНО 🎤</b>\n\n"
+        "Тепер надсилайте голосові АБО текстові повідомлення з командами:\n\n"
+        "• <b>\"додай ліда\"</b> - створити нового ліда\n"
+        "• <b>\"знайди [ім'я]\"</b> - шукати ліда\n"
+        "• <b>\"статистика\"</b> - показати статистику\n"
+        "• <b>\"покажи ліди\"</b> - список лідів\n\n"
+        "<i>Працює з голосовими повідомленнями та текстом!</i>\n\n"
+        "<i>Натисніть 'Меню' або іншу кнопку для виходу з режиму.</i>",
+        reply_markup=get_back_to_menu_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "🤖 AI Assist")
+async def cmd_ai_assist(message: Message, state: FSMContext):
+    await state.set_state(AIAssistantState.waiting_for_query)
+    await message.answer(
+        "🤖 <b>AI Assistant (TEXT MODE)</b>\n\n"
+        "Ask me anything about your leads using TEXT:\n\n"
+        "• <b>\"Show hot leads\"</b> - leads with AI score ≥ 0.6\n"
+        "• <b>\"How many from scanner?\"</b> - count by source\n"
+        "• <b>\"Who is the best candidate?\"</b> - top AI score\n"
+        "• <b>\"Leads in qualified stage\"</b> - filter by stage\n\n"
+        "<i>Type your question below...</i>\n\n"
+        "<b>Note:</b> For VOICE queries, use 🎤 Voice mode instead!",
+        reply_markup=get_back_to_menu_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@router.message(AIAssistantState.waiting_for_query)
+async def handle_ai_query(message: Message, state: FSMContext):
+    """Handle AI Assistant queries."""
+    from app.ai.assistant import ai_assistant
+    
+    query = message.text or ""
+    if not query:
+        return
+    
+    await message.answer("🤖 <i>Думаю...</i>", parse_mode="HTML")
+    
+    # Fetch leads for context
+    leads = await get_leads_via_api(user_id=message.from_user.id)
+    
+    # Process query with AI (Ukrainian responses)
+    response = await ai_assistant.process_query(query, leads)
+    
+    await message.answer(response, parse_mode="HTML")
+
+
 @router.message(F.text == "⚡ Quick")
 async def cmd_quick_actions(message: Message, state: FSMContext):
     await message.answer(
@@ -406,13 +476,668 @@ async def cmd_quick_actions(message: Message, state: FSMContext):
 # Media Handlers
 # ─────────────────────────────────────────────────────────────
 
-@router.message(F.voice)
-async def handle_voice(message: Message, state: FSMContext):
-    await message.answer(
-        f"🎤 <b>Voice Received</b>\n\nDuration: <b>{message.voice.duration}s</b>\n\n"
-        f"<i>Voice processing is not yet configured.</i>",
+# Voice confirmation states
+class VoiceConfirmState(StatesGroup):
+    waiting_for_create_confirm = State()
+    waiting_for_note_confirm = State()
+    waiting_for_edit_confirm = State()
+
+
+def get_voice_confirm_keyboard(lead_id: int = None, data_type: str = "lead") -> InlineKeyboardMarkup:
+    """Get inline keyboard for voice confirmation with edit/cancel/confirm."""
+    builder = InlineKeyboardBuilder()
+    if data_type == "lead":
+        builder.add(InlineKeyboardButton(text="✅ Підтвердити", callback_data="voice_confirm_create"))
+        builder.add(InlineKeyboardButton(text="✏️ Редагувати", callback_data="voice_edit_create"))
+    else:
+        builder.add(InlineKeyboardButton(text="✅ Підтвердити", callback_data=f"voice_confirm_note_{lead_id}"))
+        builder.add(InlineKeyboardButton(text="✏️ Редагувати", callback_data=f"voice_edit_note_{lead_id}"))
+    builder.add(InlineKeyboardButton(text="❌ Скасувати", callback_data="voice_cancel"))
+    builder.adjust(2, 1)
+    return builder.as_markup()
+
+
+@router.callback_query(F.data == "voice_confirm_create")
+async def voice_confirm_create(callback: CallbackQuery, state: FSMContext):
+    """Handle voice lead creation confirmation."""
+    await callback.answer()
+    data = await state.get_data()
+    lead_payload = data.get("pending_lead_data", {})
+    lead = await _api_post("/api/v1/leads", lead_payload, user_id=callback.from_user.id)
+    await state.clear()
+    if lead and "error" not in lead:
+        await callback.message.answer(
+            f"✅ <b>Лід створений!</b>\n\n"
+            f"ID: #{lead.get('id')}\n"
+            f"Ім'я: {lead.get('full_name', '—')}\n"
+            f"Джерело: {lead.get('source', 'MANUAL')}\n"
+            f"Телефон: {lead.get('phone', '—')}\n"
+            f"Email: {lead.get('email', '—')}",
+            parse_mode="HTML"
+        )
+    else:
+        await callback.message.answer(
+            f"⚠️ <b>Помилка створення ліда</b>\n{lead.get('detail', 'Невідома помилка')}",
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data == "voice_edit_create")
+async def voice_edit_create(callback: CallbackQuery, state: FSMContext):
+    """Handle voice lead edit - start full lead creation form."""
+    await callback.answer("Відкриваю форму...")
+    data = await state.get_data()
+    lead_data = data.get("pending_lead_data", {})
+    await state.clear()
+    await state.set_state(LeadCreationState.waiting_for_source)
+    await state.update_data(source=lead_data.get("source", "MANUAL"))
+    await callback.message.answer(
+        "✏️ <b>РЕДАГУВАННЯ ЛІДА</b>\n\n"
+        "Дані з голосу розпізнані. Заповніть форму вручну.",
         parse_mode="HTML"
     )
+
+
+@router.callback_query(F.data == "voice_cancel")
+async def voice_cancel(callback: CallbackQuery, state: FSMContext):
+    """Handle voice command cancellation."""
+    await callback.answer("Скасовано")
+    await state.clear()
+    await callback.message.answer("❌ Скасовано. Дані не збережено.", parse_mode="HTML")
+
+
+@router.callback_query(F.data.regexp(r"^voice_confirm_note_(\d+)$"))
+async def voice_confirm_note(callback: CallbackQuery, state: FSMContext):
+    """Handle voice note confirmation."""
+    import re
+    match = re.search(r"voice_confirm_note_(\d+)", callback.data)
+    if not match:
+        return
+    await callback.answer()
+    data = await state.get_data()
+    note_payload = data.get("pending_note_data", {})
+    lead_id = int(match.group(1))
+    result = await _api_post(f"/api/v1/leads/{lead_id}/notes", note_payload, user_id=callback.from_user.id)
+    await state.clear()
+    if result and "error" not in result:
+        await callback.message.answer(
+            f"✅ <b>Нотатка додана!</b>\n\n"
+            f"До ліда #{lead_id}\n"
+            f"Категория: {note_payload.get('category', 'general').upper()}\n"
+            f"Текст: {note_payload.get('content', '')[:100]}...",
+            parse_mode="HTML"
+        )
+    else:
+        await callback.message.answer("⚠️ Не вдалося додати нотатку.", parse_mode="HTML")
+
+
+@router.callback_query(F.data.regexp(r"^voice_edit_note_(\d+)$"))
+async def voice_edit_note(callback: CallbackQuery, state: FSMContext):
+    """Handle voice note edit."""
+    import re
+    match = re.search(r"voice_edit_note_(\d+)", callback.data)
+    if not match:
+        return
+    lead_id = int(match.group(1))
+    await callback.answer("Відкриваю форму нотатки...")
+    await state.set_state(AddNoteState.waiting_for_text)
+    await state.update_data(note_lead_id=lead_id)
+    await callback.message.answer(
+        f"✏️ <b>РЕДАГУВАННЯ НОТАТКИ</b>\n\n"
+        f"Для ліда #{lead_id}\n\n"
+        "Введіть текст нотатки вручну:",
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.voice, VoiceChatState.active)
+async def handle_voice(message: Message, state: FSMContext):
+    """Handle voice messages - ONLY when voice chat mode is active."""
+    from app.ai.unified_ai_service import unified_ai
+    
+    bot_instance = get_bot()
+    
+    await message.answer("🎤 <i>Обробляю голос...</i>", parse_mode="HTML")
+    
+    try:
+        # Download voice file
+        voice = message.voice
+        file = await bot_instance.get_file(voice.file_id)
+        voice_content = await bot_instance.download_file(file.file_path)
+        
+        # Transcribe with FREE Whisper (HuggingFace or OpenAI)
+        text = await unified_ai.transcribe_voice(voice_content)
+        
+        if not text:
+            await message.answer(
+                "⚠️ <b>Голос не розпізнано</b>\n\nСпробуйте ще раз або надішліть текст.",
+                parse_mode="HTML"
+            )
+            return
+        
+        await message.answer(f"🎤 <b>Розпізнано:</b> \"{text}\"", parse_mode="HTML")
+        
+        # Use AI to understand context better
+        leads = await get_leads_via_api(user_id=message.from_user.id)
+        
+        # Parse command using unified AI
+        parsed = unified_ai.parse_command(text)
+        action = parsed.get("action")
+        lead_data = parsed.get("lead_data", {})
+        query = parsed.get("query")
+        
+        # If no action detected, use simple rule-based fallback
+        text_lower = text.lower()
+        if not action:
+            if any(kw in text_lower for kw in ["додай ліда", "створи ліда", "new lead", "новийлід"]):
+                action = "create"
+            elif any(kw in text_lower for kw in ["нотатк", "замітк", "note", "записа"]):
+                action = "note"
+                # Try to extract lead ID
+                lead_id_match = re.search(r'лід[ау]?\s*#?(\d+)', text_lower)
+                if lead_id_match:
+                    lead_data["lead_id"] = int(lead_id_match.group(1))
+            elif any(kw in text_lower for kw in ["покажи", "список", "show", "list", "ліди"]):
+                action = "list"
+        
+        if action == "create" and lead_data:
+            # Build lead data for confirmation
+            lead_payload = {
+                "source": lead_data.get("source", "MANUAL"),
+                "telegram_id": str(message.from_user.id),
+            }
+            if lead_data.get("name"):
+                lead_payload["full_name"] = lead_data["name"]
+            if lead_data.get("phone"):
+                lead_payload["phone"] = lead_data["phone"]
+            if lead_data.get("email"):
+                lead_payload["email"] = lead_data["email"]
+            if lead_data.get("domain"):
+                lead_payload["business_domain"] = lead_data["domain"]
+            
+            # Show confirmation with inline keyboard
+            name = lead_payload.get("full_name", "—")
+            phone = lead_payload.get("phone", "—")
+            email = lead_payload.get("email", "—")
+            source = lead_payload.get("source", "MANUAL")
+            
+            confirm_text = (
+                f"📋 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
+                f"Створити ліда з голосових даних?\n\n"
+                f"👤 <b>Ім'я:</b> {name}\n"
+                f"📞 <b>Телефон:</b> {phone}\n"
+                f"📧 <b>Email:</b> {email}\n"
+                f"📡 <b>Джерело:</b> {source}\n\n"
+                "<i>Виберіть дію:</i>"
+            )
+            
+            await state.set_state(VoiceConfirmState.waiting_for_create_confirm)
+            await state.update_data(pending_lead_data=lead_payload)
+            await message.answer(confirm_text, reply_markup=get_voice_confirm_keyboard(data_type="lead"), parse_mode="HTML")
+            return
+                
+        elif action == "note" and lead_data.get("lead_id"):
+            lead_id = lead_data["lead_id"]
+            note_content = lead_data.get("content", text)
+            
+            # Get lead from database for display
+            lead = await get_lead_by_id_via_api(lead_id, user_id=message.from_user.id)
+            lead_name = lead.get("full_name", f"Lead #{lead_id}") if lead and "error" not in lead else f"Lead #{lead_id}"
+            
+            # Check if lead exists
+            if not lead or "error" in lead:
+                await message.answer(
+                    f"⚠️ <b>Лід #{lead_id} не знайдено!</b>\n\n"
+                    "Перевірте ID ліда та спробуйте ще раз.",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Categorize note with AI (Ukrainian)
+            category = await ai_assistant.categorize_note(note_content)
+            
+            # Show confirmation with inline keyboard
+            cat_emojis = {"contact": "📞", "email": "📧", "meeting": "💼", "general": "📋", "problem": "⚠️", "success": "✅"}
+            emoji = cat_emojis.get(category, "📋")
+            
+            cat_names_ua = {
+                "contact": "Контакт",
+                "email": "Email",
+                "meeting": "Зустріч",
+                "general": "Загальне",
+                "problem": "Проблема",
+                "success": "Успіх"
+            }
+            
+            confirm_text = (
+                f"📝 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
+                f"Додати нотатку до ліда <b>{lead_name}</b>?\n\n"
+                f"{emoji} <b>Категория:</b> {cat_names_ua.get(category, category).upper()}\n"
+                f"📝 <b>Текст:</b>\n{note_content[:200]}...\n\n"
+                "<i>Виберіть дію:</i>"
+            )
+            
+            await state.set_state(VoiceConfirmState.waiting_for_note_confirm)
+            await state.update_data(
+                pending_note_data={"content": note_content, "category": category},
+                pending_note_lead_id=lead_id
+            )
+            await message.answer(confirm_text, reply_markup=get_voice_confirm_keyboard(lead_id=lead_id, data_type="note"), parse_mode="HTML")
+            return
+        
+        elif action == "list" or "ліди" in text.lower() or "leads" in text.lower():
+            # Show leads list - sync with database
+            leads = await get_leads_via_api(user_id=message.from_user.id)
+            if leads:
+                header = ui.format_leads_list(leads, "📋 Всі ліди", 0, 1)
+                keyboard = get_lead_list_keyboard(leads[:LEADS_PAGE_SIZE], 0, 1, "goto_leads")
+                await message.answer(header, reply_markup=keyboard, parse_mode="HTML")
+            else:
+                await message.answer("📋 У вас поки немає лідів.", parse_mode="HTML")
+            return
+                
+        elif action == "notes" or "нотатк" in text.lower():
+            # Show notes for user's leads
+            leads = await get_leads_via_api(user_id=message.from_user.id)
+            
+            if leads:
+                # Get notes from first lead or all leads
+                all_notes = []
+                for lead in leads[:5]:  # Check top 5 leads
+                    notes_data = await _api_get(f"/api/v1/leads/{lead['id']}/notes", user_id=message.from_user.id)
+                    if notes_data and "error" not in notes_data:
+                        items = notes_data.get("items", [])
+                        for note in items:
+                            note["lead_name"] = lead.get("full_name", f"Lead #{lead['id']}")
+                            all_notes.append(note)
+                
+                if all_notes:
+                    # Format notes by category
+                    categories = {}
+                    for note in all_notes:
+                        cat = note.get("category", "general")
+                        if cat not in categories:
+                            categories[cat] = []
+                        categories[cat].append(note)
+                    
+                    response = "📝 <b>ВАШІ НОТАТКИ</b>\n\n"
+                    cat_emojis = {
+                        "contact": "📞",
+                        "email": "📧", 
+                        "meeting": "💼",
+                        "general": "📋",
+                        "problem": "⚠️",
+                        "success": "✅"
+                    }
+                    
+                    for cat, notes in categories.items():
+                        emoji = cat_emojis.get(cat, "📋")
+                        response += f"\n{emoji} <b>{cat.upper()}</b> ({len(notes)}):\n"
+                        for note in notes[:3]:  # Show max 3 per category
+                            content = note.get("content", "")[:50]
+                            lead_name = note.get("lead_name", "")
+                            response += f"  • {content}... ({lead_name})\n"
+                    
+                    await message.answer(response, parse_mode="HTML")
+                else:
+                    await message.answer("📝 У вас поки немає нотаток.", parse_mode="HTML")
+            else:
+                await message.answer("📝 У вас поки немає лідів з нотатками.", parse_mode="HTML")
+                
+        elif action == "edit" and lead_data.get("lead_id"):
+            # Show edit menu for lead
+            lead_id = lead_data["lead_id"]
+            if not lead_id:
+                await message.answer(
+                    "ℹ️ Для редагування вкажіть ID ліда:\n"
+                    "• <code>редагуй лід #5</code>\n"
+                    "• <code>зміни ліда 3</code>",
+                    parse_mode="HTML"
+                )
+                return
+            lead = await get_lead_by_id_via_api(lead_id, user_id=message.from_user.id)
+            if lead and "error" not in lead:
+                text = ui.format_lead_card(lead)
+                await message.answer(text, parse_mode="HTML")
+                await message.answer(
+                    "✏️ <b>РЕДАГУВАННЯ ЛІДА</b>\n\n"
+                    f"Лід #{lead_id}: {lead.get('full_name')}\n\n"
+                    "Ви можете:\n"
+                    "• Змінити стадію\n"
+                    "• Змінити джерело\n"
+                    "• Змінити домен\n"
+                    "• Додати нотатку\n"
+                    "• Видалити лід",
+                    reply_markup=get_lead_detail_keyboard(lead_id, lead.get("stage")),
+                    parse_mode="HTML"
+                )
+            else:
+                await message.answer(f"⚠️ Лід #{lead_id} не знайдено!", parse_mode="HTML")
+            return
+        
+        elif action == "delete" and lead_data.get("lead_id"):
+            # Confirm delete lead
+            lead_id = lead_data["lead_id"]
+            if not lead_id:
+                await message.answer(
+                    "ℹ️ Для видалення вкажіть ID ліда:\n"
+                    "• <code>видали лід #5</code>\n"
+                    "• <code>видалити ліда 3</code>",
+                    parse_mode="HTML"
+                )
+                return
+            lead = await get_lead_by_id_via_api(lead_id, user_id=message.from_user.id)
+            if lead and "error" not in lead:
+                await message.answer(
+                    f"⚠️ <b>ВИДАЛЕННЯ ЛІДА #{lead_id}</b>\n\n"
+                    f"Лід: {lead.get('full_name')}\n\n"
+                    "Цю дію неможливо відновити!",
+                    reply_markup=get_confirm_delete_keyboard(lead_id),
+                    parse_mode="HTML"
+                )
+            else:
+                await message.answer(f"⚠️ Лід #{lead_id} не знайдено!", parse_mode="HTML")
+            return
+        
+        elif action == "stats":
+            leads = await get_leads_via_api(user_id=message.from_user.id)
+            await message.answer(ui.format_stats_simple(leads), parse_mode="HTML")
+            
+        elif action == "search" and query:
+            leads = await get_leads_via_api(user_id=message.from_user.id, query=query)
+            if leads:
+                header = ui.format_leads_list(leads, f"🔍 Результати: {query}", 0, 1)
+                keyboard = get_lead_list_keyboard(leads[:LEADS_PAGE_SIZE], 0, 1)
+                await message.answer(header, reply_markup=keyboard, parse_mode="HTML")
+            else:
+                await message.answer(f"🔍 Нічого не знайдено: {query}", parse_mode="HTML")
+            
+        else:
+            # Default: try AI assistant as fallback
+            leads = await get_leads_via_api(user_id=message.from_user.id)
+            response = await ai_assistant.process_query(text, leads)
+            await message.answer(response, parse_mode="HTML")
+                
+    except Exception as e:
+        logger.error(f"Voice processing error: {e}")
+        await message.answer(
+            f"⚠️ <b>Voice processing failed</b>\n\nError: {str(e)[:100]}\n\nPlease try again.",
+            parse_mode="HTML"
+        )
+
+
+@router.message(F.voice)
+async def handle_voice_inactive(message: Message, state: FSMContext):
+    """Handle voice messages when voice chat is NOT active."""
+    # Inform user that voice is not active
+    await message.answer(
+        "🎤 <b>Голосовий чат не активний</b>\n\n"
+        "Для використання голосових команд натисніть <b>🎤 Voice</b> у меню.\n\n"
+        "<i>Голосові повідомлення обробляються лише в режимі голосового чату.</i>",
+        reply_markup=get_back_to_menu_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@router.message(VoiceChatState.active)
+async def handle_voice_text_commands(message: Message, state: FSMContext):
+    """Handle TEXT commands in Voice Chat mode - both voice and text work!"""
+    from app.ai.unified_ai_service import unified_ai
+    
+    text = message.text or ""
+    if not text:
+        return
+    
+    await message.answer(f"📝 <i>Обробляю команду: \"{text}\"...</i>", parse_mode="HTML")
+    
+    try:
+        # Use AI to understand context
+        leads = await get_leads_via_api(user_id=message.from_user.id)
+        
+        # Parse command using unified AI
+        parsed = unified_ai.parse_command(text)
+        action = parsed.get("action")
+        lead_data = parsed.get("lead_data", {})
+        query = parsed.get("query")
+        
+        # If no action detected, use simple rule-based fallback
+        text_lower = text.lower()
+        if not action:
+            if any(kw in text_lower for kw in ["додай ліда", "створи ліда", "new lead", "новийлід"]):
+                action = "create"
+            elif any(kw in text_lower for kw in ["нотатк", "замітк", "note", "записа"]):
+                action = "note"
+                # Try to extract lead ID
+                lead_id_match = re.search(r'лід[ау]?\s*#?(\d+)', text_lower)
+                if lead_id_match:
+                    lead_data["lead_id"] = int(lead_id_match.group(1))
+            elif any(kw in text_lower for kw in ["покажи", "список", "show", "list", "ліди"]):
+                action = "list"
+        
+        if action == "create" and lead_data:
+            # Build lead data for confirmation
+            lead_payload = {
+                "source": lead_data.get("source", "MANUAL"),
+                "telegram_id": str(message.from_user.id),
+            }
+            if lead_data.get("name"):
+                lead_payload["full_name"] = lead_data["name"]
+            if lead_data.get("phone"):
+                lead_payload["phone"] = lead_data["phone"]
+            if lead_data.get("email"):
+                lead_payload["email"] = lead_data["email"]
+            if lead_data.get("domain"):
+                lead_payload["business_domain"] = lead_data["domain"]
+            
+            # Show confirmation with inline keyboard
+            name = lead_payload.get("full_name", "—")
+            phone = lead_payload.get("phone", "—")
+            email = lead_payload.get("email", "—")
+            source = lead_payload.get("source", "MANUAL")
+            
+            confirm_text = (
+                f"📋 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
+                f"Створити ліда з текстових даних?\n\n"
+                f"👤 <b>Ім'я:</b> {name}\n"
+                f"📞 <b>Телефон:</b> {phone}\n"
+                f"📧 <b>Email:</b> {email}\n"
+                f"📡 <b>Джерело:</b> {source}\n\n"
+                "<i>Виберіть дію:</i>"
+            )
+            
+            await state.set_state(VoiceConfirmState.waiting_for_create_confirm)
+            await state.update_data(pending_lead_data=lead_payload)
+            await message.answer(confirm_text, reply_markup=get_voice_confirm_keyboard(data_type="lead"), parse_mode="HTML")
+            return
+                
+        elif action == "note" and lead_data.get("lead_id"):
+            lead_id = lead_data["lead_id"]
+            note_content = lead_data.get("content", text)
+            
+            # Get lead from database for display
+            lead = await get_lead_by_id_via_api(lead_id, user_id=message.from_user.id)
+            lead_name = lead.get("full_name", f"Lead #{lead_id}") if lead and "error" not in lead else f"Lead #{lead_id}"
+            
+            # Check if lead exists
+            if not lead or "error" in lead:
+                await message.answer(
+                    f"⚠️ <b>Лід #{lead_id} не знайдено!</b>\n\n"
+                    "Перевірте ID ліда та спробуйте ще раз.",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Categorize note with AI (Ukrainian)
+            category = await ai_assistant.categorize_note(note_content)
+            
+            # Show confirmation with inline keyboard
+            cat_emojis = {"contact": "📞", "email": "📧", "meeting": "💼", "general": "📋", "problem": "⚠️", "success": "✅"}
+            emoji = cat_emojis.get(category, "📋")
+            
+            cat_names_ua = {
+                "contact": "Контакт",
+                "email": "Email",
+                "meeting": "Зустріч",
+                "general": "Загальне",
+                "problem": "Проблема",
+                "success": "Успіх"
+            }
+            
+            confirm_text = (
+                f"📝 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
+                f"Додати нотатку до ліда <b>{lead_name}</b>?\n\n"
+                f"{emoji} <b>Категория:</b> {cat_names_ua.get(category, category).upper()}\n"
+                f"📝 <b>Текст:</b>\n{note_content[:200]}...\n\n"
+                "<i>Виберіть дію:</i>"
+            )
+            
+            await state.set_state(VoiceConfirmState.waiting_for_note_confirm)
+            await state.update_data(
+                pending_note_data={"content": note_content, "category": category},
+                pending_note_lead_id=lead_id
+            )
+            await message.answer(confirm_text, reply_markup=get_voice_confirm_keyboard(lead_id=lead_id, data_type="note"), parse_mode="HTML")
+            return
+        
+        elif action == "list" or "ліди" in text.lower() or "leads" in text.lower():
+            # Show leads list - sync with database
+            leads = await get_leads_via_api(user_id=message.from_user.id)
+            if leads:
+                header = ui.format_leads_list(leads, "📋 Всі ліди", 0, 1)
+                keyboard = get_lead_list_keyboard(leads[:LEADS_PAGE_SIZE], 0, 1, "goto_leads")
+                await message.answer(header, reply_markup=keyboard, parse_mode="HTML")
+            else:
+                await message.answer("📋 У вас поки немає лідів.", parse_mode="HTML")
+            return
+                
+        elif action == "notes" or "нотатк" in text.lower():
+            # Show notes for user's leads
+            leads = await get_leads_via_api(user_id=message.from_user.id)
+            
+            if leads:
+                # Get notes from first lead or all leads
+                all_notes = []
+                for lead in leads[:5]:  # Check top 5 leads
+                    notes_data = await _api_get(f"/api/v1/leads/{lead['id']}/notes", user_id=message.from_user.id)
+                    if notes_data and "error" not in notes_data:
+                        items = notes_data.get("items", [])
+                        for note in items:
+                            note["lead_name"] = lead.get("full_name", f"Lead #{lead['id']}")
+                            all_notes.append(note)
+                
+                if all_notes:
+                    # Format notes by category
+                    categories = {}
+                    for note in all_notes:
+                        cat = note.get("category", "general")
+                        if cat not in categories:
+                            categories[cat] = []
+                        categories[cat].append(note)
+                    
+                    response = "📝 <b>ВАШІ НОТАТКИ</b>\n\n"
+                    cat_emojis = {
+                        "contact": "📞",
+                        "email": "📧", 
+                        "meeting": "💼",
+                        "general": "📋",
+                        "problem": "⚠️",
+                        "success": "✅"
+                    }
+                    
+                    for cat, notes in categories.items():
+                        emoji = cat_emojis.get(cat, "📋")
+                        response += f"\n{emoji} <b>{cat.upper()}</b> ({len(notes)}):\n"
+                        for note in notes[:3]:  # Show max 3 per category
+                            content = note.get("content", "")[:50]
+                            lead_name = note.get("lead_name", "")
+                            response += f"  • {content}... ({lead_name})\n"
+                    
+                    await message.answer(response, parse_mode="HTML")
+                else:
+                    await message.answer("📝 У вас поки немає нотаток.", parse_mode="HTML")
+            else:
+                await message.answer("📝 У вас поки немає лідів з нотатками.", parse_mode="HTML")
+        
+        elif action == "edit" and lead_data.get("lead_id"):
+            # Show edit menu for lead
+            lead_id = lead_data["lead_id"]
+            if not lead_id:
+                await message.answer(
+                    "ℹ️ Для редагування вкажіть ID ліда:\n"
+                    "• <code>редагуй лід #5</code>\n"
+                    "• <code>зміни ліда 3</code>",
+                    parse_mode="HTML"
+                )
+                return
+            lead = await get_lead_by_id_via_api(lead_id, user_id=message.from_user.id)
+            if lead and "error" not in lead:
+                text = ui.format_lead_card(lead)
+                await message.answer(text, parse_mode="HTML")
+                await message.answer(
+                    "✏️ <b>РЕДАГУВАННЯ ЛІДА</b>\n\n"
+                    f"Лід #{lead_id}: {lead.get('full_name')}\n\n"
+                    "Ви можете:\n"
+                    "• Змінити стадію\n"
+                    "• Змінити джерело\n"
+                    "• Змінити домен\n"
+                    "• Додати нотатку\n"
+                    "• Видалити лід",
+                    reply_markup=get_lead_detail_keyboard(lead_id, lead.get("stage")),
+                    parse_mode="HTML"
+                )
+            else:
+                await message.answer(f"⚠️ Лід #{lead_id} не знайдено!", parse_mode="HTML")
+            return
+        
+        elif action == "delete" and lead_data.get("lead_id"):
+            # Confirm delete lead
+            lead_id = lead_data["lead_id"]
+            if not lead_id:
+                await message.answer(
+                    "ℹ️ Для видалення вкажіть ID ліда:\n"
+                    "• <code>видали лід #5</code>\n"
+                    "• <code>видалити ліда 3</code>",
+                    parse_mode="HTML"
+                )
+                return
+            lead = await get_lead_by_id_via_api(lead_id, user_id=message.from_user.id)
+            if lead and "error" not in lead:
+                await message.answer(
+                    f"⚠️ <b>ВИДАЛЕННЯ ЛІДА #{lead_id}</b>\n\n"
+                    f"Лід: {lead.get('full_name')}\n\n"
+                    "Цю дію неможливо відновити!",
+                    reply_markup=get_confirm_delete_keyboard(lead_id),
+                    parse_mode="HTML"
+                )
+            else:
+                await message.answer(f"⚠️ Лід #{lead_id} не знайдено!", parse_mode="HTML")
+            return
+        
+        elif action == "stats":
+            leads = await get_leads_via_api(user_id=message.from_user.id)
+            await message.answer(ui.format_stats_simple(leads), parse_mode="HTML")
+            
+        elif action == "search" and query:
+            leads = await get_leads_via_api(user_id=message.from_user.id, query=query)
+            if leads:
+                header = ui.format_leads_list(leads, f"🔍 Результати: {query}", 0, 1)
+                keyboard = get_lead_list_keyboard(leads[:LEADS_PAGE_SIZE], 0, 1)
+                await message.answer(header, reply_markup=keyboard, parse_mode="HTML")
+            else:
+                await message.answer(f"🔍 Нічого не знайдено: {query}", parse_mode="HTML")
+            
+        else:
+            # Default: try AI assistant as fallback
+            leads = await get_leads_via_api(user_id=message.from_user.id)
+            response = await ai_assistant.process_query(text, leads)
+            await message.answer(response, parse_mode="HTML")
+                
+    except Exception as e:
+        logger.error(f"Text command processing error: {e}")
+        await message.answer(
+            f"⚠️ <b>Помилка обробки команди</b>\n\nError: {str(e)[:100]}\n\nСпробуйте ще раз.",
+            parse_mode="HTML"
+        )
 
 
 @router.message(F.photo)
@@ -735,7 +1460,21 @@ async def noop(callback: CallbackQuery):
 async def settings_notif(callback: CallbackQuery):
     await safe_edit(
         callback,
-        "🔔 <b>NOTIFICATIONS</b>\n\n<i>Notification settings coming soon.</i>",
+        "🔔 <b>НАЛАШТУВАННЯ СПОВІЩЕНЬ</b>\n\n"
+        "Керуйте отриманням сповіщень про ваші ліди:\n\n"
+        "📌 <b>Доступні канали:</b>\n"
+        "• <b>Telegram</b> — основний канал ✅\n"
+        "• <b>Email</b> — для важливих оновлень\n"
+        "• <b>Push</b> — миттєві сповіщення\n\n"
+        "📊 <b>Типи сповіщень:</b>\n"
+        "• 🔴 <b>Нові ліди</b> — сповіщення про нових лідів\n"
+        "• 🟡 <b>Зміна статусу</b> — оновлення етапу ліда\n"
+        "• 🟢 <b>Успішні продажі</b> — конверсії в продажі\n"
+        "• ⚪ <b>Втрачені ліди</b> — лід позначений як втрачений\n\n"
+        "⚙️ <b>Керування:</b>\n"
+        "Усі сповіщення надсилаються в чат бота.\n"
+        "Для налаштування зверніться до адміністратора.\n\n"
+        "<i>ℹ️ Детальніше: /automation</i>",
         get_back_keyboard("goto_settings")
     )
 
@@ -744,11 +1483,51 @@ async def settings_notif(callback: CallbackQuery):
 async def settings_ai(callback: CallbackQuery):
     await safe_edit(
         callback,
-        "🤖 <b>AI SETTINGS</b>\n\n"
-        "├─ Model: <code>gpt-4o-mini</code>\n"
-        "├─ Min Score: <code>0.60</code>\n"
-        "└─ Auto-analyze: <code>OFF</code>\n\n"
-        "<i>Advanced AI settings coming soon.</i>",
+        "🤖 <b>AI ASSISTANT — ПОВНА ІНСТРУКЦІЯ</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎯 <b>ЩО ВМІЄ AI ПОМОЧНИК:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "• Аналізувати лідів за допомогою AI\n"
+        "• Оцінювати якість лідів (0-100%)\n"
+        "• Давати рекомендації щодо подальших дій\n"
+        "• Categorize нотаток автоматично\n"
+        "• Шукати та фільтрувати лідів\n"
+        "• Генерувати звіти та статистику\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📝 <b>ЯК КОРИСТУВАТИСЯ:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>1. Текстовий режим (🤖 AI Assist):</b>\n"
+        "• Натисніть кнопку <b>🤖 AI Assist</b> у меню\n"
+        "• Надсилайте запити текстом:\n"
+        "  • <code>Show hot leads</code> — гарячі ліди (score ≥ 0.6)\n"
+        "  • <code>How many from scanner?</code> — ліди за джерелом\n"
+        "  • <code>Who is the best candidate?</code> — топ лід за AI\n"
+        "  • <code>Leads in qualified stage</code> — фільтр за стадією\n"
+        "  • <code>Show all leads</code> — всі ліди\n\n"
+        "<b>2. Голосовий режим (🎤 Voice):</b>\n"
+        "• Натисніть <b>🎤 Voice</b> у меню\n"
+        "• Надсилайте голосові повідомлення:\n"
+        "  • <code>додай ліда</code> — створити нового ліда\n"
+        "  • <code>покажи ліди</code> — показати список\n"
+        "  • <code>статистика</code> — показати статистику\n"
+        "  • <code>знайди [ім'я]</code> — шукати ліда\n\n"
+        "<b>3. Аналіз окремого ліда:</b>\n"
+        "• Відкрийте картку ліда\n"
+        "• Натисніть <b>🤖 AI Analyze</b>\n"
+        "• Отримаєте оцінку та рекомендацію\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "⚙️ <b>ПОТОЧНІ НАЛАШТУВАННЯ:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "• Model: <code>gpt-4o-mini</code>\n"
+        "• Min Score: <code>0.60</code> (60%)\n"
+        "• Auto-analyze: <code>OFF</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <b>ПОРАДИ:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "• AI найкраще працює з англійською мовою\n"
+        "• Чим більше інформації про ліда — тим краще\n"
+        "• Використовуйте нотатки для додаткового контексту\n"
+        "• Регулярно запускайте аналіз для актуальних даних",
         get_back_keyboard("goto_settings")
     )
 
@@ -1769,11 +2548,13 @@ def _parse_lead_text(text: str) -> dict:
         for line in lines:
             line = line.strip()
             # Skip lines that look like email, phone, or labels
-            if line and not re.match(r'^[\w\.-]+@', line, re.IGNORECASE) and \
-               not re.match(r'^\+?[\d\s\-\(\)]+$', line) and \
-               not re.match(r'^(Ім|Name|Email|Телефон|Phone|Company|Kомпан)', line, re.IGNORECASE):
-                result["full_name"] = line
-                break
+            if line:
+                is_email = line.startswith("@") or ".com" in line.lower() or ".ua" in line.lower()
+                is_phone = bool(re.match(r'^\+?[\d\s\-\(\)]+$', line))
+                is_label = any(line.lower().startswith(x) for x in ("ім", "name", "email", "телефон", "phone", "company", "компан", "posada"))
+                if not is_email and not is_phone and not is_label:
+                    result["full_name"] = line
+                    break
     
     # If the text is pipe-separated (like "Name | Email | Phone")
     if '|' in text:

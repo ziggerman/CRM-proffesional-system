@@ -18,10 +18,14 @@ from app.services.transfer_service import TransferService, TransferError
 from app.ai.ai_service import AIServiceError
 from app.models.lead import ColdStage
 from app.models.user import UserRole
+import base64
+import json
+
 from app.schemas.lead import (
     LeadCreate,
     LeadResponse,
     LeadListResponse,
+    CursorPageResponse,
     LeadStageUpdate,
     LeadUpdate,
     LeadMessageUpdate,
@@ -101,6 +105,54 @@ async def list_leads(
         "page_size": page_size,
         "has_next": page < total_pages,
         "has_prev": page > 1,
+    }
+
+
+@router.get("/cursor", response_model=CursorPageResponse)
+async def list_leads_cursor(
+    stage: ColdStage | None = Query(default=None),
+    source: str | None = Query(default=None, description="Filter by source"),
+    business_domain: str | None = Query(default=None, description="Filter by business domain"),
+    assigned_to_id: int | None = Query(default=None, description="Filter by assigned user ID"),
+    cursor: str | None = Query(default=None, description="Base64-encoded cursor from previous response"),
+    limit: int = Query(default=50, ge=1, le=200, description="Items per page"),
+    svc: LeadService = Depends(get_lead_service),
+):
+    """
+    List leads with cursor-based pagination.
+    
+    For large datasets (>10K items), prefer this over page-based pagination.
+    Use 'next_cursor' from response to get next page.
+    """
+    # Decode cursor
+    cursor_id = None
+    if cursor:
+        try:
+            cursor_data = json.loads(base64.b64decode(cursor).decode())
+            cursor_id = cursor_data.get("id")
+        except Exception:
+            pass  # Invalid cursor, start from beginning
+    
+    # Get leads using cursor pagination
+    items, total, next_cursor = await svc.repo.get_page_by_cursor(
+        cursor_id=cursor_id,
+        limit=limit,
+        stage=stage,
+        source=source,
+        business_domain=business_domain,
+        assigned_to_id=assigned_to_id,
+    )
+    
+    # Encode next cursor
+    next_cursor_b64 = None
+    if next_cursor:
+        next_cursor_b64 = base64.b64encode(json.dumps({"id": next_cursor}).encode()).decode()
+    
+    return {
+        "items": items,
+        "total": total,
+        "next_cursor": next_cursor_b64,
+        "has_next": next_cursor is not None,
     }
 
 
@@ -255,6 +307,33 @@ async def update_stage(
     try:
         lead = await svc.get_lead(lead_id)
         return await svc.transition_stage(lead, data.stage)
+    except LeadNotFoundError:
+        _not_found(lead_id)
+    except LeadStageError as e:
+        _bad_request(str(e))
+
+
+class StageRollbackRequest(BaseModel):
+    """Request body for stage rollback."""
+    reason: str = Field(..., min_length=10, description="Reason for rollback (min 10 chars)")
+
+
+@router.post("/{lead_id}/rollback", response_model=LeadResponse)
+async def rollback_stage(
+    lead_id: int,
+    data: StageRollbackRequest,
+    svc: LeadService = Depends(get_lead_service),
+    _ = Depends(require_role("manager"))
+):
+    """
+    Rollback lead to previous stage.
+    
+    Only allowed for CONTACTED → NEW and QUALIFIED → CONTACTED.
+    Requires reason with minimum 10 characters.
+    """
+    try:
+        lead = await svc.get_lead(lead_id)
+        return await svc.rollback_stage(lead, data.reason)
     except LeadNotFoundError:
         _not_found(lead_id)
     except LeadStageError as e:

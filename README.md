@@ -12,6 +12,7 @@ The system follows a clean, modular architecture designed for scalability and ma
 - **Asynchronous UI**: Built with `aiogram 3.x`, featuring a rich, emoji-driven interface.
 - **State Management**: Uses FSM (Finite State Machine) for complex flows like `Search`, `Lead Creation`, and `Adding Notes`.
 - **Role-Aware**: Dynamic UI rendering based on User Roles (Agent, Manager, Admin).
+- **🎤 Voice Mode**: Hands-free operation with voice-to-text transcription.
 
 ### ⚙️ FastAPI Backend (The "Engine")
 - **Service Layer Pattern**: All business logic is encapsulated in `app/services`, keeping routers thin and focused on validation.
@@ -20,6 +21,10 @@ The system follows a clean, modular architecture designed for scalability and ma
 
 ### 🤖 AI Layer (The "Advisor")
 - **OpenAI Integration**: Uses `gpt-4o-mini` for lead scoring and qualitative recommendation.
+- **Voice Transcription**: Multiple options for voice-to-text:
+  - **Local (faster-whisper)**: Free, offline, fastest - no API calls needed
+  - **HuggingFace API**: Free tier with online access
+  - **OpenAI Whisper**: Paid, most reliable option
 - **Cache Integrity**: Implements Redis caching with deterministic keys (SHA-256) to prevent redundant AI calls.
 - **Stale Protection**: Automatically detects if a lead's data has changed significantly since the last analysis.
 
@@ -28,6 +33,32 @@ The system follows a clean, modular architecture designed for scalability and ma
 - **Redis**: Acts as the Celery broker and high-performance result/AI cache.
 - **Celery**: Handles intensive background tasks like CSV generation and stale lead notifications.
 - **WebSockets**: Provides low-latency dashboard reload signals to active clients.
+
+---
+
+## 🎤 Voice Mode - Hands-Free CRM
+
+The Telegram bot supports **voice commands** for hands-free operation:
+
+### Features
+- **Voice Message Transcription**: Speak naturally, AI understands
+- **Text Commands in Voice Mode**: Type or speak - both work
+- **Offline Capable**: Uses local faster-whisper model (no API needed)
+
+### Commands in Voice Mode
+| Command | Action |
+|---------|--------|
+| "додай ліда" | Create new lead |
+| "покажи ліди" | Show leads list |
+| "статистика" | Show statistics |
+| "знайди [ім'я]" | Search for lead |
+| Voice message | Auto-transcribe & process |
+
+### Voice Transcription Options
+Priority order:
+1. **Local (faster-whisper)**: Free, offline, fastest
+2. **HuggingFace API**: Free tier, requires token
+3. **OpenAI Whisper**: Paid, most accurate
 
 ---
 
@@ -92,14 +123,23 @@ While this MVP is robust, moving to a global enterprise scale would involve:
 ```bash
 cp .env.example .env
 # Required: TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, API_SECRET_TOKEN
+
+# Optional (for voice):
+# - HUGGINGFACE_TOKEN: For free HuggingFace voice API
+# - LOCAL_WHISPER_MODEL: tiny/base/small (default: base)
 ```
 
-### 2. Launch with Docker (Recommended)
+### 2. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Launch with Docker (Recommended)
 ```bash
 docker-compose up -d --build
 ```
 
-### 3. Manual Startup
+### 4. Manual Startup
 ```bash
 # Apply Migrations
 alembic upgrade head
@@ -109,7 +149,50 @@ celery -A app.celery.config worker --loglevel=info
 
 # Run FastAPI
 uvicorn main:app --reload
+
+# Run Telegram Bot (separate terminal)
+python run_bot.py
 ```
 
 ---
+
+## 📋 Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Start the bot |
+| `/menu` | Show main menu |
+| `/help` | Show help |
+| `/settings` | Open settings |
+
+### Menu Buttons
+- **📋 Leads** - Manage leads
+- **💰 Sales** - Sales pipeline
+- **📊 Stats** - View statistics
+- **➕ New Lead** - Create lead
+- **🎤 Voice** - Voice command mode
+- **🤖 AI Assist** - AI assistant queries
+- **⚡ Quick** - Quick actions
+
+---
+
+## 🔧 Configuration
+
+### Environment Variables
+```env
+# Required
+TELEGRAM_BOT_TOKEN=your_bot_token
+OPENAI_API_KEY=sk-...
+API_SECRET_TOKEN=your_secret
+
+# Optional - Voice
+HUGGINGFACE_TOKEN=hf_...  # Free voice API
+LOCAL_WHISPER_MODEL=base   # tiny/base/small
+
+# Database
+DATABASE_URL=sqlite+aiosqlite:///./crm.db
+```
+
+---
+
 *Developed for Ascend Edge Ltd — CRM Modernization Initiative.*

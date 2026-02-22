@@ -8,7 +8,7 @@ Rules enforced here (NOT in AI, NOT in API layer):
 """
 from datetime import datetime, UTC
 
-from app.models.lead import Lead, ColdStage, COLD_STAGE_ORDER, TERMINAL_COLD_STAGES
+from app.models.lead import Lead, ColdStage, COLD_STAGE_ORDER, TERMINAL_COLD_STAGES, REVERSIBLE_STAGE_TRANSITIONS
 from app.models.history import LeadHistory
 from app.repositories.lead_repo import LeadRepository
 from app.repositories.history_repo import HistoryRepository
@@ -194,13 +194,70 @@ class LeadService:
             
         return await self.repo.save(lead)
 
-    async def save_ai_analysis(self, lead: Lead, result: AIAnalysisResult) -> Lead:
+    async def save_ai_analysis(self, lead: Lead, result: AIAnalysisResult, analyzed_by: str = "openai") -> Lead:
         """Persist AI result to lead. Does NOT trigger any state change."""
+        from app.models.score_history import LeadScoreHistory
+        
+        # Save to score history for audit trail
+        score_history = LeadScoreHistory(
+            lead_id=lead.id,
+            score=result.score,
+            recommendation=result.recommendation,
+            reason=result.reason,
+            analyzed_by=analyzed_by,
+        )
+        self.repo.db.add(score_history)
+        
+        # Update lead with new score and calculate quality tier
         lead.ai_score = result.score
         lead.ai_recommendation = result.recommendation
         lead.ai_reason = result.reason
         lead.ai_analyzed_at = datetime.now(UTC)
+        lead.quality_tier = calculate_quality_tier(result.score)
+        
         return await self.repo.save(lead)
+
+    async def rollback_stage(self, lead: Lead, reason: str, changed_by: str = "System") -> Lead:
+        """
+        Rollback lead to previous stage.
+        
+        Only allowed for reversible transitions defined in REVERSIBLE_STAGE_TRANSITIONS.
+        Requires a reason (min 10 characters).
+        """
+        from app.models.lead import LeadStageError as LocalStageError
+        
+        current = lead.stage
+        
+        # Check if current stage can be rolled back
+        if current not in REVERSIBLE_STAGE_TRANSITIONS:
+            raise LeadStageError(
+                f"Stage '{current.value}' cannot be rolled back. "
+                f"Only {list(REVERSIBLE_STAGE_TRANSITIONS.keys())} can be rolled back."
+            )
+        
+        # Validate reason length
+        if len(reason) < 10:
+            raise LeadStageError("Rollback reason must be at least 10 characters.")
+        
+        # Get target stage
+        target_stage = REVERSIBLE_STAGE_TRANSITIONS[current]
+        
+        # Log history
+        history = LeadHistory(
+            lead_id=lead.id,
+            old_stage=current.value,
+            new_stage=target_stage.value,
+            changed_by=changed_by,
+            reason=f"ROLLBACK: {reason}"
+        )
+        
+        self.repo.db.add(history)
+        lead.stage = target_stage
+        
+        updated_lead = await self.repo.save(lead)
+        await ws_manager.broadcast({"event": "lead_rolled_back", "lead_id": lead.id, "stage": target_stage.value})
+        
+        return updated_lead
 
     async def add_attachment(
         self, 

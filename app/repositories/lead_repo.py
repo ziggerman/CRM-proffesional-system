@@ -198,3 +198,81 @@ class LeadRepository:
         stmt = delete(Lead).where(Lead.id.in_(lead_ids))
         result = await self.db.execute(stmt)
         return result.rowcount
+
+    # ──────────────────────────────────────────────
+    # Cursor-based pagination (Phase 5.3)
+    # ──────────────────────────────────────────────
+    
+    async def get_page_by_cursor(
+        self,
+        cursor_id: Optional[int] = None,
+        limit: int = 50,
+        stage: Optional[ColdStage] = None,
+        source: Optional[str] = None,
+        business_domain: Optional[str] = None,
+        assigned_to_id: Optional[int] = None,
+        include_deleted: bool = False,
+    ) -> tuple[list[Lead], int, Optional[str]]:
+        """
+        Get leads using cursor-based pagination for better performance with large datasets.
+        
+        Args:
+            cursor_id: Last lead ID from previous page (keyset pagination)
+            limit: Number of items per page
+            stage: Filter by stage
+            source: Filter by source
+            business_domain: Filter by business domain
+            assigned_to_id: Filter by assigned user
+            include_deleted: Include soft-deleted leads
+            
+        Returns:
+            Tuple of (leads, total_count, next_cursor)
+        """
+        from sqlalchemy import String, or_, func
+        
+        # Base query with filters
+        stmt = select(Lead)
+        
+        # Soft delete filter
+        if not include_deleted:
+            stmt = stmt.where(Lead.is_deleted == False)
+        
+        # Apply filters
+        if stage:
+            stmt = stmt.where(Lead.stage == stage)
+        if source:
+            stmt = stmt.where(Lead.source == source)
+        if business_domain:
+            stmt = stmt.where(Lead.business_domain == business_domain)
+        if assigned_to_id is not None:
+            stmt = stmt.where(Lead.assigned_to_id == assigned_to_id)
+        
+        # Cursor-based filtering (keyset pagination on ID)
+        if cursor_id is not None:
+            stmt = stmt.where(Lead.id < cursor_id)
+        
+        # Total count (without cursor filter for accuracy)
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        count_result = await self.db.execute(count_stmt)
+        total = count_result.scalar() or 0
+        
+        # Fetch one extra to check if there's a next page
+        stmt = stmt.options(
+            selectinload(Lead.sale), 
+            selectinload(Lead.notes),
+            selectinload(Lead.attachments)
+        )
+        stmt = stmt.order_by(Lead.id.desc()).limit(limit + 1)
+        
+        result = await self.db.execute(stmt)
+        leads = list(result.scalars().all())
+        
+        # Determine next cursor
+        next_cursor = None
+        has_next = False
+        if len(leads) > limit:
+            leads = leads[:limit]  # Remove the extra item
+            has_next = True
+            next_cursor = leads[-1].id  # Last item's ID
+        
+        return leads, total, next_cursor

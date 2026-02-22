@@ -56,6 +56,16 @@ class AdminState(StatesGroup):
     statistics = State()
 
 
+class AIAssistantState(StatesGroup):
+    """States for AI Assistant conversation."""
+    waiting_for_query = State()
+
+
+class VoiceChatState(StatesGroup):
+    """States for Voice Chat mode - voice commands are processed only when active."""
+    active = State()
+
+
 # State storage key prefixes
 LEAD_CREATION_PREFIX = "lead_create"
 LEAD_VIEW_PREFIX = "lead_view"

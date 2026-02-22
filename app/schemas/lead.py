@@ -108,7 +108,6 @@ class LeadResponse(BaseModel):
     ai_score: Optional[float]
     ai_recommendation: Optional[str]
     ai_reason: Optional[str]
-    ai_analyzed_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
@@ -140,11 +139,25 @@ class LeadHistoryResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CursorPageResponse(BaseModel):
+    """Schema for cursor-based pagination response."""
+    items: list[LeadResponse]
+    total: int
+    next_cursor: Optional[str] = Field(default=None, description="Cursor for next page (base64)")
+    has_next: bool = Field(default=False, description="Whether there are more items")
+    # Legacy support
+    page: int = Field(default=1, description="Current page number (deprecated, use cursor)")
+    page_size: int = Field(default=50, description="Items per page (deprecated)")
+    has_prev: bool = Field(default=False, description="Whether there are previous pages (deprecated)")
+
+
 class LeadListResponse(BaseModel):
     """Schema for paginated lead list."""
     items: list[LeadResponse]
     total: int
     page: int = Field(default=1, description="Current page number")
     page_size: int = Field(default=50, description="Items per page")
-    has_next: bool = Field(default=False, description="Whether there are more pages")
+    has_next: bool = Field(default=False, description="Whether there are more Pages")
     has_prev: bool = Field(default=False, description="Whether there are previous pages")
+    # Cursor support
+    next_cursor: Optional[str] = Field(default=None, description="Cursor for next page")

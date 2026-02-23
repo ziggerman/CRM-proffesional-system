@@ -287,7 +287,6 @@ class UnifiedAIService:
         }
         lead_data = {k: v for k, v in lead_data.items() if v is not None}
 
-<<<<<<< HEAD
         mapped_action = action_map.get(action.intent, "ai_query")
         if action.intent == Intent.UNKNOWN:
             mapped_action = None
@@ -295,12 +294,7 @@ class UnifiedAIService:
         missing_fields = self._detect_missing_fields(mapped_action, lead_data)
 
         return {
-            "action": mapped_action,
-=======
-        return {
-            "action": action_map.get(action.intent, "ai_query"),
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-            "query": action.entities.search_query or text,
+            "action": mapped_action,            "query": action.entities.search_query or text,
             "lead_data": lead_data,
             "confidence": action.confidence,
             "raw_text": text,

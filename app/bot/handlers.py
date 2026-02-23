@@ -40,37 +40,7 @@ from app.bot.keyboards import (
     get_back_keyboard,
     get_back_to_menu_keyboard,
     get_retry_keyboard,
-<<<<<<< HEAD
-    get_dashboard_keyboard,
-=======
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-    # Sales Keyboards
-    get_sales_category_keyboard,
-    get_sale_stage_categories_keyboard,
-    get_sales_list_keyboard,
-    get_sale_detail_keyboard,
-    get_edit_sale_stage_keyboard,
-    # Lead creation keyboards
-    get_name_keyboard,
-    get_email_keyboard,
-    get_phone_keyboard,
-    get_username_keyboard,
-    get_intent_keyboard,
-    get_qualification_keyboard,
-    get_lead_confirm_keyboard,
-    get_notes_manage_keyboard,
-    get_note_view_keyboard,
-    get_note_confirm_keyboard,
-<<<<<<< HEAD
-    get_ai_lead_draft_keyboard,
-    get_ai_analysis_next_steps_keyboard,
-)
-from app.bot.states import LeadCreationState, LeadPasteState, AddNoteState, SearchState, SaleManagementState, AIAssistantState, VoiceChatState, CopilotState
-=======
-)
-from app.bot.states import LeadCreationState, LeadPasteState, AddNoteState, SearchState, SaleManagementState, AIAssistantState, VoiceChatState
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-from app.bot import ui
+    get_dashboard_keyboard,from app.bot import ui
 from app.bot.keyboards import get_paste_lead_keyboard, get_paste_confirm_keyboard
 from app.core.config import settings
 from app.ai.unified_ai_service import unified_ai as ai_assistant
@@ -119,7 +89,6 @@ def _voice_quality_badge(score: float) -> str:
     return "🔴"
 
 
-<<<<<<< HEAD
 def _sanitize_telegram_html(text: str) -> str:
     """Sanitize AI text for Telegram HTML parse mode.
 
@@ -131,438 +100,6 @@ def _sanitize_telegram_html(text: str) -> str:
     text = re.sub(r"<\s*br\s*/?\s*>", "\n", text, flags=re.IGNORECASE)
     return text
 
-
-=======
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-# ─────────────────────────────────────────────────────────────
-# Bot Instance
-# ─────────────────────────────────────────────────────────────
-
-def get_bot() -> Bot:
-    global bot
-    if bot is None:
-        bot = Bot(token=bot_settings.TELEGRAM_BOT_TOKEN)
-    return bot
-
-
-# ─────────────────────────────────────────────────────────────
-# API Client Functions
-# ─────────────────────────────────────────────────────────────
-
-async def _get_role_header(telegram_id: str | int = None) -> dict:
-    """Fetch user role and build X-User-Role header."""
-    if not telegram_id:
-        return {}
-    
-    # Priority 1: Check if admin by static ID list (Step 3.1 fallback)
-    from app.bot.config import bot_settings
-    if int(telegram_id) in bot_settings.TELEGRAM_ADMIN_IDS:
-        return {"X-User-Role": "ADMIN"}
-
-    import httpx
-    url = _build_api_url(f"/api/v1/users/me?telegram_id={telegram_id}")
-    auth_header = {"Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}"} if hasattr(bot_settings, 'API_SECRET_TOKEN') else {}
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, headers=auth_header, timeout=5.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                return {"X-User-Role": data.get("role", "agent").upper()}
-    except Exception as e:
-        logger.error(f"Failed to fetch role for {telegram_id}: {e}")
-        
-    return {"X-User-Role": "AGENT"}
-
-
-def _build_request_ids() -> tuple[str, str]:
-    request_id = str(uuid.uuid4())
-    correlation_id = request_id
-    return request_id, correlation_id
-
-
-def _extract_api_error_payload(payload: dict | None, status_code: int | None = None) -> dict:
-    if isinstance(payload, dict):
-        if {"code", "message", "detail", "context"}.issubset(payload.keys()):
-            return payload
-        detail = payload.get("detail")
-        if isinstance(detail, dict) and {"code", "message", "detail", "context"}.issubset(detail.keys()):
-            return detail
-        return {
-            "code": payload.get("code", "api_error"),
-            "message": payload.get("message", "Request failed"),
-            "detail": detail if detail is not None else payload,
-            "context": payload.get("context", {}),
-        }
-    return {
-        "code": "api_error",
-        "message": "Request failed",
-        "detail": payload or f"HTTP {status_code}",
-        "context": {},
-    }
-
-
-def _api_error_text(result: dict | None, fallback: str = "Сталася помилка під час запиту.") -> str:
-    if not result:
-        return fallback
-    detail = result.get("detail")
-    if isinstance(detail, dict):
-        message = detail.get("message") or fallback
-        nested = detail.get("detail")
-        return f"{message}: {nested}" if nested else message
-    if isinstance(detail, str):
-        return detail
-    return fallback
-
-
-def _build_api_url(path: str) -> str:
-    """Build backend API URL from configurable base URL."""
-    if path.startswith("http://") or path.startswith("https://"):
-        return path
-    base_url = bot_settings.API_BASE_URL.rstrip("/")
-    norm_path = path if path.startswith("/") else f"/{path}"
-    return f"{base_url}{norm_path}"
-
-
-async def _upload_file_to_api(lead_id: int, file_id: str, file_name: str, user_id: int = None) -> Optional[dict]:
-    """Download file from Telegram and upload to Lead API."""
-    import httpx
-    bot_instance = get_bot()
-    
-    try:
-        file = await bot_instance.get_file(file_id)
-        file_content = await bot_instance.download_file(file.file_path)
-        
-        url = _build_api_url(f"/api/v1/leads/{lead_id}/attachments")
-        headers = {"Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}"} if hasattr(bot_settings, 'API_SECRET_TOKEN') else {}
-        if user_id:
-            headers.update(await _get_role_header(user_id))
-            
-        files = {"file": (file_name, file_content)}
-        
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(url, headers=headers, files=files, timeout=30.0)
-            if resp.status_code in (200, 201):
-                return resp.json()
-    except Exception as e:
-        logger.error(f"File upload failed for lead {lead_id}: {e}")
-        
-    return None
-
-
-async def _api_get(path: str, user_id: int = None) -> Optional[dict]:
-    import httpx
-    url = _build_api_url(path)
-    request_id, correlation_id = _build_request_ids()
-    headers = {
-        "Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}",
-        "X-Request-ID": request_id,
-        "X-Correlation-ID": correlation_id,
-    } if hasattr(bot_settings, 'API_SECRET_TOKEN') else {"X-Request-ID": request_id, "X-Correlation-ID": correlation_id}
-    if user_id:
-        headers.update(await _get_role_header(user_id))
-        
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, headers=headers, timeout=10.0)
-            if response.status_code == 200:
-                return response.json()
-            payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {"detail": response.text}
-            parsed = _extract_api_error_payload(payload, response.status_code)
-            logger.warning("API GET failed", extra={"path": path, "status": response.status_code, "request_id": request_id, "correlation_id": correlation_id, "error": parsed})
-            return {"error": True, "detail": parsed, "status": response.status_code}
-        except Exception as e:
-            logger.error(f"API GET {path} error: {e}", extra={"request_id": request_id, "correlation_id": correlation_id})
-    return {"error": True, "detail": {"code": "connection_error", "message": "Connection error", "detail": "Unable to reach backend API", "context": {"path": path, "request_id": request_id, "correlation_id": correlation_id}}}
-
-
-async def _api_post(path: str, data: dict, user_id: int = None) -> Optional[dict]:
-    import httpx
-    url = _build_api_url(path)
-    request_id, correlation_id = _build_request_ids()
-    headers = {
-        "Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}",
-        "X-Request-ID": request_id,
-        "X-Correlation-ID": correlation_id,
-    } if hasattr(bot_settings, 'API_SECRET_TOKEN') else {"X-Request-ID": request_id, "X-Correlation-ID": correlation_id}
-    if user_id:
-        headers.update(await _get_role_header(user_id))
-
-    def _extract_error_detail(response: httpx.Response) -> str:
-        try:
-            payload = response.json()
-            if isinstance(payload, dict):
-                detail = payload.get("detail")
-                if isinstance(detail, str):
-                    return detail
-                if detail is not None:
-                    return str(detail)
-            return response.text or f"HTTP {response.status_code}"
-        except Exception:
-            return response.text or f"HTTP {response.status_code}"
-        
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url, json=data, headers=headers, timeout=10.0)
-            if response.status_code in (200, 201):
-                return response.json()
-            payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {"detail": _extract_error_detail(response)}
-            parsed = _extract_api_error_payload(payload, response.status_code)
-            logger.warning("API POST failed", extra={"path": path, "status": response.status_code, "request_id": request_id, "correlation_id": correlation_id, "error": parsed})
-            return {"error": True, "detail": parsed, "status": response.status_code}
-        except Exception as e:
-            logger.error(f"API POST {path} error: {e}", extra={"request_id": request_id, "correlation_id": correlation_id})
-    return {"error": True, "detail": {"code": "connection_error", "message": "Connection error", "detail": "Unable to reach backend API", "context": {"path": path, "request_id": request_id, "correlation_id": correlation_id}}}
-
-
-def is_valid_email(email: str) -> bool:
-    import re
-    return bool(re.match(r"[^@]+@[^@]+\.[^@]+", email))
-
-
-def is_valid_phone(phone: str) -> bool:
-    import re
-    # Basic check for + and digits, min 7 chars
-    return bool(re.match(r"^\+?[0-9\s\-]{7,20}$", phone))
-
-
-async def _api_patch(path: str, data: dict, user_id: int = None) -> Optional[dict]:
-    import httpx
-    url = _build_api_url(path)
-    request_id, correlation_id = _build_request_ids()
-    headers = {
-        "Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}",
-        "X-Request-ID": request_id,
-        "X-Correlation-ID": correlation_id,
-    } if hasattr(bot_settings, 'API_SECRET_TOKEN') else {"X-Request-ID": request_id, "X-Correlation-ID": correlation_id}
-    if user_id:
-        headers.update(await _get_role_header(user_id))
-        
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.patch(url, json=data, headers=headers, timeout=10.0)
-            if response.status_code == 200:
-                return response.json()
-            payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {"detail": response.text}
-            parsed = _extract_api_error_payload(payload, response.status_code)
-            logger.warning("API PATCH failed", extra={"path": path, "status": response.status_code, "request_id": request_id, "correlation_id": correlation_id, "error": parsed})
-            return {"error": True, "detail": parsed, "status": response.status_code}
-        except Exception as e:
-            logger.error(f"API PATCH {path} error: {e}", extra={"request_id": request_id, "correlation_id": correlation_id})
-    return {"error": True, "detail": {"code": "connection_error", "message": "Connection error", "detail": "Unable to reach backend API", "context": {"path": path, "request_id": request_id, "correlation_id": correlation_id}}}
-
-
-async def _api_delete(path: str, user_id: int = None) -> bool:
-    import httpx
-    url = _build_api_url(path)
-    request_id, correlation_id = _build_request_ids()
-    headers = {
-        "Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}",
-        "X-Request-ID": request_id,
-        "X-Correlation-ID": correlation_id,
-    } if hasattr(bot_settings, 'API_SECRET_TOKEN') else {"X-Request-ID": request_id, "X-Correlation-ID": correlation_id}
-    if user_id:
-        headers.update(await _get_role_header(user_id))
-        
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.delete(url, headers=headers, timeout=10.0)
-            return response.status_code in (200, 204)
-        except Exception as e:
-            logger.error(f"API DELETE {path} error: {e}", extra={"request_id": request_id, "correlation_id": correlation_id})
-    return False
-
-
-async def create_lead_via_api(source: str, domain: str = None, telegram_id: int = None, user_id: int = None) -> Optional[dict]:
-    data = {"source": source, "telegram_id": str(telegram_id) if telegram_id else None}
-    if domain:
-        data["business_domain"] = domain
-    return await _api_post("/api/v1/leads", data, user_id=user_id)
-
-
-async def get_leads_via_api(
-    stage: str = None, 
-    source: str = None, 
-    domain: str = None, 
-    assigned_to_id: int = None, 
-    user_id: int = None,
-    query: str = None,
-    created_after: str = None,
-    created_before: str = None
-) -> list:
-    params = []
-    if stage:
-        params.append(f"stage={stage}")
-    if source:
-        params.append(f"source={source}")
-    if domain:
-        params.append(f"business_domain={domain}")
-    if assigned_to_id:
-        params.append(f"assigned_to_id={assigned_to_id}")
-    if query:
-        import urllib.parse
-        params.append(f"query={urllib.parse.quote(query)}")
-    if created_after:
-        params.append(f"created_after={created_after}")
-    if created_before:
-        params.append(f"created_before={created_before}")
-
-    query = "?" + "&".join(params) if params else ""
-    data = await _api_get(f"/api/v1/leads{query}", user_id=user_id)
-    if data and isinstance(data, dict):
-        return data.get("items", [])
-    return []
-
-
-async def get_lead_by_id_via_api(lead_id: int, user_id: int = None) -> Optional[dict]:
-    return await _api_get(f"/api/v1/leads/{lead_id}", user_id=user_id)
-
-
-async def update_lead_via_api(lead_id: int, data: dict, user_id: int = None) -> Optional[dict]:
-    return await _api_patch(f"/api/v1/leads/{lead_id}", data, user_id=user_id)
-
-
-async def update_lead_stage_via_api(lead_id: int, stage: str, user_id: int = None) -> Optional[dict]:
-    return await _api_patch(f"/api/v1/leads/{lead_id}/stage", {"stage": stage}, user_id=user_id)
-
-
-async def delete_lead_via_api(lead_id: int, user_id: int = None) -> bool:
-    return await _api_delete(f"/api/v1/leads/{lead_id}", user_id)
-
-
-async def get_dashboard_via_api(user_id: int = None) -> Optional[dict]:
-    return await _api_get("/api/v1/dashboard", user_id=user_id)
-
-
-# ─────────────────────────────────────────────────────────────
-# UX Helpers
-# ─────────────────────────────────────────────────────────────
-
-async def safe_edit(callback: CallbackQuery, text: str, markup=None, parse_mode: str = "HTML"):
-    """Edit message safely — answer callback regardless of errors."""
-    try:
-        await callback.message.edit_text(text, reply_markup=markup, parse_mode=parse_mode)
-    except Exception as e:
-        logger.warning(f"safe_edit failed: {e}")
-    finally:
-        await callback.answer()
-
-
-async def show_lead_detail(callback: CallbackQuery, lead_id: int):
-    """Render and show the lead detail view."""
-    lead = await get_lead_by_id_via_api(lead_id, user_id=callback.from_user.id)
-    if lead:
-        text = ui.format_lead_card(lead)
-        stage = lead.get("stage")
-        await safe_edit(callback, text, get_lead_detail_keyboard(lead_id, stage))
-    else:
-        await safe_edit(
-            callback,
-            ui.format_error(f"Lead #{lead_id} not found.", "ID may be invalid or deleted."),
-            get_back_to_menu_keyboard()
-        )
-
-
-async def show_leads_list_page(callback: CallbackQuery, leads: list, title: str, page: int = 0, back_cb: str = "goto_leads"):
-    """Show a paginated leads list."""
-    total_leads = len(leads)
-    total_pages = max(1, (total_leads + LEADS_PAGE_SIZE - 1) // LEADS_PAGE_SIZE)
-    page = max(0, min(page, total_pages - 1))
-    page_leads = leads[page * LEADS_PAGE_SIZE:(page + 1) * LEADS_PAGE_SIZE]
-
-    header = ui.format_leads_list(leads, title, page, total_pages)
-    keyboard = get_lead_list_keyboard(page_leads, page, total_pages, back_cb)
-    await safe_edit(callback, header, keyboard)
-
-
-<<<<<<< HEAD
-def _build_lead_payload_from_ai(lead_data: dict, telegram_user_id: int) -> dict:
-    payload = {
-        "source": lead_data.get("source", "MANUAL"),
-        "telegram_id": str(telegram_user_id),
-    }
-    if lead_data.get("name"):
-        payload["full_name"] = lead_data["name"]
-    if lead_data.get("phone"):
-        payload["phone"] = lead_data["phone"]
-    if lead_data.get("email"):
-        payload["email"] = lead_data["email"]
-    if lead_data.get("domain"):
-        payload["business_domain"] = lead_data["domain"]
-    return payload
-
-
-def _render_lead_draft_text(lead_payload: dict, source_label: str = "текстових") -> str:
-    name = lead_payload.get("full_name", "—")
-    phone = lead_payload.get("phone", "—")
-    email = lead_payload.get("email", "—")
-    source = lead_payload.get("source", "MANUAL")
-    return (
-        f"📋 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
-        f"Розпізнав запит на створення ліда з {source_label} даних.\n\n"
-        f"👤 <b>Ім'я:</b> {name}\n"
-        f"📞 <b>Телефон:</b> {phone}\n"
-        f"📧 <b>Email:</b> {email}\n"
-        f"📡 <b>Джерело:</b> {source}\n\n"
-        "<i>Оберіть дію:</i>"
-    )
-
-
-def _build_next_question_for_analysis(lead: dict | None) -> str:
-    if not lead:
-        return "Яку саме проблему клієнта ми закриваємо рішенням?"
-    if not lead.get("phone"):
-        return "Немає телефону. Додати номер для швидкого контакту?"
-    if not lead.get("email"):
-        return "Немає email. Додати email для follow-up?"
-    if not lead.get("business_domain"):
-        return "Уточніть сферу бізнесу ліда, щоб зробити рекомендацію точнішою."
-    stage = (lead.get("stage") or "").upper()
-    if stage == "NEW":
-        return "Наступний крок: зробити перший контакт. Позначити як Contacted?"
-    if stage == "CONTACTED":
-        return "Наступний крок: кваліфікація. Чи готові позначити ліда як Qualified?"
-    if stage == "QUALIFIED":
-        return "Наступний крок: передача в Sales. Перевести в Transferred?"
-    return "Який наступний крок по цьому ліду ви хочете виконати?"
-
-
-def _extract_lead_id_from_text(text: str) -> Optional[int]:
-    text_lower = (text or "").lower()
-    m = re.search(r"(?:лід|лид|lead)[ауе]?\s*#?(\d+)", text_lower)
-    if m:
-        return int(m.group(1))
-    m2 = re.search(r"#(\d+)", text_lower)
-    return int(m2.group(1)) if m2 else None
-
-
-def _copilot_missing_fields_prompt(action: Optional[str], missing_fields: list[str]) -> Optional[str]:
-    """Return a targeted slot-filling clarification message for Copilot."""
-    if not missing_fields:
-        return None
-
-    if action == "create" and "name_or_phone_or_email" in missing_fields:
-        return (
-            "Щоб додати ліда, дайте мінімум один атрибут: ім'я, телефон або email.\n"
-            "Наприклад: <code>додай ліда Іван, +380..., ivan@email.com</code>"
-        )
-
-    if action == "analyze" and "lead_id" in missing_fields:
-        return "ℹ️ Для аналізу вкажіть ID ліда: <code>проаналізуй ліда #12</code>"
-
-    if action == "note":
-        if "lead_id" in missing_fields and "content" in missing_fields:
-            return "ℹ️ Для нотатки вкажіть ID і текст: <code>додай нотатку до ліда #12: передзвонити завтра</code>"
-        if "lead_id" in missing_fields:
-            return "ℹ️ Для нотатки вкажіть ID ліда: <code>додай нотатку до ліда #12 ...</code>"
-        if "content" in missing_fields:
-            return "ℹ️ Напишіть текст нотатки після ID: <code>до ліда #12: ...</code>"
-
-    return None
-
-
-=======
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 # ─────────────────────────────────────────────────────────────
 # Command Handlers
 # ─────────────────────────────────────────────────────────────
@@ -581,18 +118,10 @@ async def cmd_start(message: Message, state: FSMContext):
     user = message.from_user
     is_admin = user.id in bot_settings.TELEGRAM_ADMIN_IDS
 
-<<<<<<< HEAD
     # Main menu keyboard (static reply keyboard)
     await message.answer(
         ui.format_welcome(user.first_name, is_admin),
-        reply_markup=get_main_menu_keyboard(),
-=======
-    # Main menu keyboard disabled per user request - use inline menu only
-    await message.answer(
-        ui.format_welcome(user.first_name, is_admin),
-        reply_markup=get_menu_keyboard(),
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        parse_mode="HTML"
+        reply_markup=get_main_menu_keyboard(),        parse_mode="HTML"
     )
 
 
@@ -664,7 +193,6 @@ async def cmd_new_lead(message: Message, state: FSMContext):
     )
 
 
-<<<<<<< HEAD
 @router.message(F.text.in_(["🎤 Voice", "🤖 AI Assist", "🤖 Copilot"]))
 async def cmd_ai_assist(message: Message, state: FSMContext):
     await state.clear()
@@ -677,41 +205,7 @@ async def cmd_ai_assist(message: Message, state: FSMContext):
         "• <b>\"покажи ліди\"</b>\n"
         "• <b>\"статистика\"</b>\n"
         "• <b>\"show hot leads\"</b>\n\n"
-        "<i>Для виходу натисніть Меню або /cancel.</i>",
-=======
-@router.message(F.text == "🎤 Voice")
-async def cmd_voice(message: Message, state: FSMContext):
-    # Clear any other States but set voice chat mode
-    await state.clear()
-    await state.set_state(VoiceChatState.active)
-    await message.answer(
-        "🎤 <b>Голосовий чат УВІМКНЕНО 🎤</b>\n\n"
-        "Тепер надсилайте голосові АБО текстові повідомлення з командами:\n\n"
-        "• <b>\"додай ліда\"</b> - створити нового ліда\n"
-        "• <b>\"знайди [ім'я]\"</b> - шукати ліда\n"
-        "• <b>\"статистика\"</b> - показати статистику\n"
-        "• <b>\"покажи ліди\"</b> - список лідів\n\n"
-        "<i>Працює з голосовими повідомленнями та текстом!</i>\n\n"
-        "<i>Натисніть 'Меню' або іншу кнопку для виходу з режиму.</i>",
-        reply_markup=get_back_to_menu_keyboard(),
-        parse_mode="HTML"
-    )
-
-
-@router.message(F.text == "🤖 AI Assist")
-async def cmd_ai_assist(message: Message, state: FSMContext):
-    await state.clear()
-    await state.set_state(AIAssistantState.waiting_for_query)
-    await message.answer(
-        "🤖 <b>AI Assistant (TEXT + VOICE MODE)</b>\n\n"
-        "Ask me anything about your leads using text or voice:\n\n"
-        "• <b>\"Show hot leads\"</b> - leads with AI score ≥ 0.6\n"
-        "• <b>\"How many from scanner?\"</b> - count by source\n"
-        "• <b>\"Who is the best candidate?\"</b> - top AI score\n"
-        "• <b>\"Leads in qualified stage\"</b> - filter by stage\n\n"
-        "<i>Type your question or send voice message below...</i>",
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        reply_markup=get_back_to_menu_keyboard(),
+        "<i>Для виходу натисніть Меню або /cancel.</i>",        reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML"
     )
 
@@ -733,12 +227,7 @@ async def handle_ai_query(message: Message, state: FSMContext):
     leads = await get_leads_via_api(user_id=message.from_user.id)
     
     # Process query with AI (Ukrainian responses)
-<<<<<<< HEAD
     response = _sanitize_telegram_html(await ai_assistant.process_query(query, leads))
-=======
-    response = await ai_assistant.process_query(query, leads)
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-
     # Safe send: try HTML, fallback to plain text if markup fails
     try:
         await message.answer(response, parse_mode="HTML")
@@ -796,12 +285,7 @@ async def handle_ai_voice_query(message: Message, state: FSMContext):
         await message.answer("🤖 <i>Думаю...</i>", parse_mode="HTML")
 
         leads = await get_leads_via_api(user_id=message.from_user.id)
-<<<<<<< HEAD
-        response = _sanitize_telegram_html(await ai_assistant.process_query(query_text, leads))
-=======
-        response = await ai_assistant.process_query(query_text, leads)
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        try:
+        response = _sanitize_telegram_html(await ai_assistant.process_query(query_text, leads))        try:
             await message.answer(response, parse_mode="HTML")
         except Exception as send_err:
             logger.warning(f"Failed to send AI voice response with HTML, fallback to plain: {send_err}")
@@ -978,20 +462,11 @@ async def voice_edit_note(callback: CallbackQuery, state: FSMContext):
 async def handle_cancel_voice_mode(message: Message, state: FSMContext):
     """Handle cancel/exit from voice mode."""
     current_state = await state.get_state()
-<<<<<<< HEAD
     if current_state in {VoiceChatState.active.state, CopilotState.active.state, AIAssistantState.waiting_for_query.state}:
         await state.clear()
         await message.answer(
             "👋 <b>Вихід з режиму Copilot</b>\n\n"
-            "Ви вийшли з режиму Copilot. Повертайтесь до меню.",
-=======
-    if current_state == VoiceChatState.active:
-        await state.clear()
-        await message.answer(
-            "👋 <b>Вихід з режиму голосу</b>\n\n"
-            "Ви вийшли з голосового режиму. Повертайтесь до меню.",
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-            reply_markup=get_main_menu_keyboard(),
+            "Ви вийшли з режиму Copilot. Повертайтесь до меню.",            reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML"
         )
         return
@@ -1005,85 +480,7 @@ async def handle_cancel_voice_mode(message: Message, state: FSMContext):
 
 
 @router.message(F.voice, VoiceChatState.active)
-<<<<<<< HEAD
-@router.message(F.voice, CopilotState.active)
-=======
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-async def handle_voice(message: Message, state: FSMContext):
-    """Handle voice messages - ONLY when voice chat mode is active."""
-
-    # Check for cancel in any state
-    current_state = await state.get_state()
-    if current_state and "Confirm" in str(current_state):
-        # Check if user sent a cancel command - we need to check the message text
-        # But voice messages don't have text, so we need another way
-        # Let's check the current state data
-        pass
-    
-    bot_instance = get_bot()
-    user_id = message.from_user.id
-    
-    await message.answer("🎤 <i>Обробляю голос...</i>", parse_mode="HTML")
-
-    if ai_assistant is None:
-        await message.answer("⚠️ AI service unavailable right now. Please try again later.", parse_mode="HTML")
-        return
-    
-    try:
-        # Download voice file
-        voice = message.voice
-        file = await bot_instance.get_file(voice.file_id)
-        voice_content = await bot_instance.download_file(file.file_path)
-        
-        # Transcribe with FREE Whisper (HuggingFace or OpenAI)
-        text = await ai_assistant.transcribe_voice(voice_content)
-        
-        if not text:
-            await message.answer(
-                "⚠️ <b>Голос не розпізнано</b>\n\nСпробуйте ще раз або надішліть текст.",
-                parse_mode="HTML"
-            )
-            return
-
-        quality = ai_assistant.assess_transcription_quality(text)
-        badge = _voice_quality_badge(quality.get("score", 0.0))
-        await message.answer(
-            f"🎤 <b>Розпізнано:</b> \"{text}\"\n"
-            f"{badge} <b>Якість:</b> {quality.get('label', 'UNKNOWN')} ({quality.get('score', 0.0):.0%})",
-            parse_mode="HTML"
-        )
-
-        if quality.get("needs_clarification"):
-            hints = quality.get("hints", [])
-            hint_text = "\n".join([f"• {h}" for h in hints]) if hints else "• Скажіть команду чіткіше"
-            await message.answer(
-                "⚠️ <b>Низька якість розпізнавання</b>\n\n"
-                "Повторіть голосову команду, щоб я не виконав дію помилково.\n\n"
-                f"<b>Підказки:</b>\n{hint_text}",
-                parse_mode="HTML"
-            )
-            return
-        
-        # Use AI to understand context better
-        leads = await get_leads_via_api(user_id=user_id)
-        
-        # Get user context for pronoun resolution
-        user_context = ai_assistant.get_user_context(user_id)
-        
-        # Resolve pronouns in text
-        resolved_text, resolved_lead_id, resolved_lead_name = ai_assistant.resolve_pronoun(text, user_id)
-        
-        # Parse command using unified AI
-        parsed = ai_assistant.parse_command(text, user_id=user_id)
-        action = parsed.get("action")
-        lead_data = parsed.get("lead_data", {})
-        query = parsed.get("query")
-<<<<<<< HEAD
-        ui_hint = parsed.get("ui_hint", {})
-        missing_fields = parsed.get("missing_fields", [])
-=======
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        
+@router.message(F.voice, CopilotState.active)        
         # If no action detected, use simple rule-based fallback
         text_lower = text.lower()
         if not action:
@@ -1100,7 +497,6 @@ async def handle_voice(message: Message, state: FSMContext):
                         lead_data["lead_id"] = int(lead_id_match.group(1))
             elif any(kw in text_lower for kw in ["покажи", "список", "show", "list", "ліди"]):
                 action = "list"
-<<<<<<< HEAD
 
         # Confidence gate + slot filling clarification
         if ui_hint.get("reason") == "low_confidence" and not action:
@@ -1117,108 +513,7 @@ async def handle_voice(message: Message, state: FSMContext):
         slot_prompt = _copilot_missing_fields_prompt(action, missing_fields)
         if slot_prompt:
             await message.answer(slot_prompt, parse_mode="HTML")
-            return
-=======
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        
-        # Update context with action info if lead was mentioned
-        if lead_data.get("lead_id") or resolved_lead_id:
-            lead_id_for_context = lead_data.get("lead_id") or resolved_lead_id
-            # Get lead name for context
-            lead_info = next((l for l in leads if l.get("id") == lead_id_for_context), None)
-            lead_name = lead_info.get("full_name") if lead_info else f"Lead #{lead_id_for_context}"
-            ai_assistant.update_context(user_id, lead_id_for_context, lead_name, action)
-        
-<<<<<<< HEAD
-        if action == "create" and not lead_data:
-            await message.answer(
-                "Щоб додати ліда, дайте мінімум один атрибут: ім'я, телефон або email.\n"
-                "Наприклад: <code>додай ліда Іван, +380..., ivan@email.com</code>",
-                parse_mode="HTML"
-            )
-            return
-
-        if action == "create" and lead_data:
-            if ui_hint and not ui_hint.get("show_buttons", True):
-                await message.answer(
-                    "Щоб створити ліда, надайте хоча б ім'я, телефон або email.",
-                    parse_mode="HTML"
-                )
-                return
-
-            lead_payload = _build_lead_payload_from_ai(lead_data, message.from_user.id)
-            await state.update_data(pending_ai_lead_payload=lead_payload)
-            await message.answer(
-                _render_lead_draft_text(lead_payload, source_label="голосових"),
-                reply_markup=get_ai_lead_draft_keyboard(),
-                parse_mode="HTML"
-            )
-            return
-
-        elif action == "analyze":
-            lead_id = lead_data.get("lead_id") or resolved_lead_id
-            if not lead_id:
-                await message.answer(
-                    "ℹ️ Для аналізу вкажіть ID ліда: <code>проаналізуй ліда #12</code>",
-                    parse_mode="HTML"
-                )
-                return
-            result = await _api_post(f"/api/v1/leads/{lead_id}/analyze", {}, user_id=message.from_user.id)
-            if result and "error" not in result:
-                score = result.get("score", 0)
-                recommendation = result.get("recommendation", "N/A")
-                reason = result.get("reason", "")
-                text_resp = (
-                    f"🤖 <b>AI АНАЛІЗ</b> — Lead #{lead_id}\n\n"
-                    f"<b>Score:</b>\n{ui.ai_score_bar(score)}\n\n"
-                    f"<b>💡 Recommendation:</b> <i>{recommendation}</i>"
-                )
-                if reason:
-                    text_resp += f"\n\n<b>📋 Причина:</b>\n<i>{reason}</i>"
-                await message.answer(
-                    text_resp,
-                    reply_markup=get_ai_analysis_next_steps_keyboard(lead_id),
-                    parse_mode="HTML"
-                )
-            else:
-                await message.answer(f"⚠️ Аналіз не вдався: {_api_error_text(result)}", parse_mode="HTML")
-=======
-        if action == "create" and lead_data:
-            # Build lead data for confirmation
-            lead_payload = {
-                "source": lead_data.get("source", "MANUAL"),
-                "telegram_id": str(message.from_user.id),
-            }
-            if lead_data.get("name"):
-                lead_payload["full_name"] = lead_data["name"]
-            if lead_data.get("phone"):
-                lead_payload["phone"] = lead_data["phone"]
-            if lead_data.get("email"):
-                lead_payload["email"] = lead_data["email"]
-            if lead_data.get("domain"):
-                lead_payload["business_domain"] = lead_data["domain"]
-            
-            # Show confirmation with inline keyboard
-            name = lead_payload.get("full_name", "—")
-            phone = lead_payload.get("phone", "—")
-            email = lead_payload.get("email", "—")
-            source = lead_payload.get("source", "MANUAL")
-            
-            confirm_text = (
-                f"📋 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
-                f"Створити ліда з голосових даних?\n\n"
-                f"👤 <b>Ім'я:</b> {name}\n"
-                f"📞 <b>Телефон:</b> {phone}\n"
-                f"📧 <b>Email:</b> {email}\n"
-                f"📡 <b>Джерело:</b> {source}\n\n"
-                "<i>Виберіть дію:</i>"
-            )
-            
-            await state.set_state(VoiceConfirmState.waiting_for_create_confirm)
-            await state.update_data(pending_lead_data=lead_payload)
-            await message.answer(confirm_text, reply_markup=get_voice_confirm_keyboard(data_type="lead"), parse_mode="HTML")
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-            return
+            return            return
                 
         elif action == "note" and lead_data.get("lead_id"):
             lead_id = lead_data["lead_id"]
@@ -1381,12 +676,7 @@ async def handle_voice(message: Message, state: FSMContext):
         else:
             # Default: try AI assistant as fallback
             leads = await get_leads_via_api(user_id=message.from_user.id)
-<<<<<<< HEAD
-            response = _sanitize_telegram_html(await ai_assistant.process_query(text, leads))
-=======
-            response = await ai_assistant.process_query(text, leads)
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-            await message.answer(response, parse_mode="HTML")
+            response = _sanitize_telegram_html(await ai_assistant.process_query(text, leads))            await message.answer(response, parse_mode="HTML")
                 
     except Exception as e:
         logger.error(f"Voice processing error: {e}")
@@ -1401,50 +691,15 @@ async def handle_voice_inactive(message: Message, state: FSMContext):
     """Handle voice messages when voice chat is NOT active."""
     # Inform user that voice is not active
     await message.answer(
-<<<<<<< HEAD
         "🎤 <b>Copilot режим не активний</b>\n\n"
         "Для використання голосу/тексту натисніть <b>🤖 Copilot</b> (або старі кнопки для сумісності).\n\n"
-        "<i>Голосові повідомлення обробляються в активному Copilot режимі.</i>",
-=======
-        "🎤 <b>Голосовий чат не активний</b>\n\n"
-        "Для використання голосових команд натисніть <b>🎤 Voice</b> у меню.\n\n"
-        "<i>Голосові повідомлення обробляються лише в режимі голосового чату.</i>",
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        reply_markup=get_back_to_menu_keyboard(),
+        "<i>Голосові повідомлення обробляються в активному Copilot режимі.</i>",        reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML"
     )
 
 
 @router.message(VoiceChatState.active)
-<<<<<<< HEAD
-@router.message(CopilotState.active)
-=======
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-async def handle_voice_text_commands(message: Message, state: FSMContext):
-    """Handle TEXT commands in Voice Chat mode - both voice and text work!"""
-
-    text = message.text or ""
-    if not text:
-        return
-
-    if ai_assistant is None:
-        await message.answer("⚠️ AI service unavailable right now. Please try again later.", parse_mode="HTML")
-        return
-    
-    # Check for cancel commands FIRST - before any other processing
-    text_lower = text.lower().strip()
-    cancel_keywords = ["скасуй", "скасувати", "cancel", "ні", "no", "відміна", "відмінити", "стоп", "stop"]
-    if text_lower in cancel_keywords or text == "/cancel":
-        await state.clear()
-        await message.answer(
-<<<<<<< HEAD
-            "👋 <b>Вихід з режиму Copilot</b>\n\n"
-            "Ви вийшли з режиму Copilot. Повертайтесь до меню.",
-=======
-            "👋 <b>Вихід з режиму голосу</b>\n\n"
-            "Ви вийшли з голосового режиму. Повертайтесь до меню.",
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-            reply_markup=get_main_menu_keyboard(),
+@router.message(CopilotState.active)            reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML"
         )
         return
@@ -1460,138 +715,8 @@ async def handle_voice_text_commands(message: Message, state: FSMContext):
         action = parsed.get("action")
         lead_data = parsed.get("lead_data", {})
         query = parsed.get("query")
-<<<<<<< HEAD
         ui_hint = parsed.get("ui_hint", {})
-        missing_fields = parsed.get("missing_fields", [])
-=======
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        
-        # If no action detected, use simple rule-based fallback (flexible)
-        text_lower = text.lower()
-        if not action:
-            # CREATE - flexible patterns
-            create_keywords = ["лід", "ліда", "лідів"]
-            create_verbs = ["додай", "додати", "потрібно", "створи", "new"]
-            if any(v in text_lower for v in create_verbs) and any(k in text_lower for k in create_keywords):
-                action = "create"
-            # NOTE - flexible
-            elif any(k in text_lower for k in ["нотатк", "замітк", "note"]):
-                action = "note"
-                lead_id_match = re.search(r'лід[ау]?\s*#?(\d+)', text_lower)
-                if lead_id_match:
-                    lead_data["lead_id"] = int(lead_id_match.group(1))
-            # LIST - flexible
-            elif any(k in text_lower for k in ["лід", "ліди", "покажи", "show", "list"]):
-                action = "list"
-<<<<<<< HEAD
-
-        # Confidence gate + slot filling clarification
-        if ui_hint.get("reason") == "low_confidence" and not action:
-            await message.answer(
-                "🤔 Я не до кінця впевнений, що правильно зрозумів запит.\n\n"
-                "Спробуйте конкретніше:\n"
-                "• <code>додай ліда Іван +380...</code>\n"
-                "• <code>проаналізуй ліда #12</code>\n"
-                "• <code>додай нотатку до ліда #12: ...</code>",
-                parse_mode="HTML"
-            )
-            return
-
-        slot_prompt = _copilot_missing_fields_prompt(action, missing_fields)
-        if slot_prompt:
-            await message.answer(slot_prompt, parse_mode="HTML")
-            return
-        
-        if action == "create" and not lead_data:
-            await message.answer(
-                "Щоб додати ліда, дайте мінімум один атрибут: ім'я, телефон або email.\n"
-                "Наприклад: <code>додай ліда Іван, +380..., ivan@email.com</code>",
-                parse_mode="HTML"
-            )
-            return
-
-        if action == "create" and lead_data:
-            if ui_hint and not ui_hint.get("show_buttons", True):
-                await message.answer(
-                    "Щоб створити ліда, надайте хоча б ім'я, телефон або email.",
-                    parse_mode="HTML"
-                )
-                return
-
-            lead_payload = _build_lead_payload_from_ai(lead_data, message.from_user.id)
-            await state.update_data(pending_ai_lead_payload=lead_payload)
-            await message.answer(
-                _render_lead_draft_text(lead_payload, source_label="текстових"),
-                reply_markup=get_ai_lead_draft_keyboard(),
-                parse_mode="HTML"
-            )
-            return
-
-        elif action == "analyze":
-            lead_id = lead_data.get("lead_id")
-            if not lead_id:
-                await message.answer(
-                    "ℹ️ Для аналізу вкажіть ID ліда: <code>проаналізуй ліда #12</code>",
-                    parse_mode="HTML"
-                )
-                return
-            result = await _api_post(f"/api/v1/leads/{lead_id}/analyze", {}, user_id=message.from_user.id)
-            if result and "error" not in result:
-                score = result.get("score", 0)
-                recommendation = result.get("recommendation", "N/A")
-                reason = result.get("reason", "")
-                text_resp = (
-                    f"🤖 <b>AI АНАЛІЗ</b> — Lead #{lead_id}\n\n"
-                    f"<b>Score:</b>\n{ui.ai_score_bar(score)}\n\n"
-                    f"<b>💡 Recommendation:</b> <i>{recommendation}</i>"
-                )
-                if reason:
-                    text_resp += f"\n\n<b>📋 Причина:</b>\n<i>{reason}</i>"
-                await message.answer(
-                    text_resp,
-                    reply_markup=get_ai_analysis_next_steps_keyboard(lead_id),
-                    parse_mode="HTML"
-                )
-            else:
-                await message.answer(f"⚠️ Аналіз не вдався: {_api_error_text(result)}", parse_mode="HTML")
-=======
-        
-        if action == "create" and lead_data:
-            # Build lead data for confirmation
-            lead_payload = {
-                "source": lead_data.get("source", "MANUAL"),
-                "telegram_id": str(message.from_user.id),
-            }
-            if lead_data.get("name"):
-                lead_payload["full_name"] = lead_data["name"]
-            if lead_data.get("phone"):
-                lead_payload["phone"] = lead_data["phone"]
-            if lead_data.get("email"):
-                lead_payload["email"] = lead_data["email"]
-            if lead_data.get("domain"):
-                lead_payload["business_domain"] = lead_data["domain"]
-            
-            # Show confirmation with inline keyboard
-            name = lead_payload.get("full_name", "—")
-            phone = lead_payload.get("phone", "—")
-            email = lead_payload.get("email", "—")
-            source = lead_payload.get("source", "MANUAL")
-            
-            confirm_text = (
-                f"📋 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
-                f"Створити ліда з текстових даних?\n\n"
-                f"👤 <b>Ім'я:</b> {name}\n"
-                f"📞 <b>Телефон:</b> {phone}\n"
-                f"📧 <b>Email:</b> {email}\n"
-                f"📡 <b>Джерело:</b> {source}\n\n"
-                "<i>Виберіть дію:</i>"
-            )
-            
-            await state.set_state(VoiceConfirmState.waiting_for_create_confirm)
-            await state.update_data(pending_lead_data=lead_payload)
-            await message.answer(confirm_text, reply_markup=get_voice_confirm_keyboard(data_type="lead"), parse_mode="HTML")
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-            return
+        missing_fields = parsed.get("missing_fields", [])            return
                 
         elif action == "note" and lead_data.get("lead_id"):
             lead_id = lead_data["lead_id"]
@@ -1754,12 +879,7 @@ async def handle_voice_text_commands(message: Message, state: FSMContext):
         else:
             # Default: try AI assistant as fallback
             leads = await get_leads_via_api(user_id=message.from_user.id)
-<<<<<<< HEAD
-            response = _sanitize_telegram_html(await ai_assistant.process_query(text, leads))
-=======
-            response = await ai_assistant.process_query(text, leads)
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-            await message.answer(response, parse_mode="HTML")
+            response = _sanitize_telegram_html(await ai_assistant.process_query(text, leads))            await message.answer(response, parse_mode="HTML")
                 
     except Exception as e:
         logger.error(f"Text command processing error: {e}")
@@ -2140,27 +1260,14 @@ async def settings_ai(callback: CallbackQuery):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "📝 <b>ЯК КОРИСТУВАТИСЯ:</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-<<<<<<< HEAD
         "<b>1. Copilot (🤖 Text + Voice):</b>\n"
-        "• Натисніть кнопку <b>🤖 Copilot</b> у меню\n"
-=======
-        "<b>1. AI Assist (🤖 Text + Voice):</b>\n"
-        "• Натисніть кнопку <b>🤖 AI Assist</b> у меню\n"
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        "• Надсилайте запити текстом або голосом:\n"
+        "• Натисніть кнопку <b>🤖 Copilot</b> у меню\n"        "• Надсилайте запити текстом або голосом:\n"
         f"  • <code>Show hot leads</code> — гарячі ліди (score ≥ {settings.MIN_TRANSFER_SCORE:.2f})\n"
         "  • <code>How many from scanner?</code> — ліди за джерелом\n"
         "  • <code>Who is the best candidate?</code> — топ лід за AI\n"
         "  • <code>Leads in qualified stage</code> — фільтр за стадією\n"
         "  • <code>Show all leads</code> — всі ліди\n\n"
-<<<<<<< HEAD
-        "<b>2. Швидкі команди в Copilot:</b>\n"
-=======
-        "<b>2. Голосовий режим (🎤 Voice):</b>\n"
-        "• Натисніть <b>🎤 Voice</b> у меню\n"
-        "• Надсилайте голосові повідомлення:\n"
->>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
-        "  • <code>додай ліда</code> — створити нового ліда\n"
+        "<b>2. Швидкі команди в Copilot:</b>\n"        "  • <code>додай ліда</code> — створити нового ліда\n"
         "  • <code>покажи ліди</code> — показати список\n"
         "  • <code>статистика</code> — показати статистику\n"
         "  • <code>знайди [ім'я]</code> — шукати ліда\n\n"

@@ -66,6 +66,7 @@ class VoiceChatState(StatesGroup):
     active = State()
 
 
+<<<<<<< HEAD
 class CopilotState(StatesGroup):
     """Unified AI Copilot mode (text + voice in one module)."""
     active = State()
@@ -73,6 +74,8 @@ class CopilotState(StatesGroup):
     awaiting_clarification = State()
 
 
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 # State storage key prefixes
 LEAD_CREATION_PREFIX = "lead_create"
 LEAD_VIEW_PREFIX = "lead_view"

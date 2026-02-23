@@ -47,11 +47,19 @@ python run_bot.py
 DATABASE_URL=sqlite+aiosqlite:///./crm.db
 
 # Telegram
+<<<<<<< HEAD
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
 TELEGRAM_ADMIN_IDS=[123456789]
 
 # OpenAI (for AI features)
 OPENAI_API_KEY=your-openai-api-key-here
+=======
+TELEGRAM_BOT_TOKEN=8558216907:AAF7jm-fl7OhLt0oZjYYzUY6cdV3Xptqw2c
+TELEGRAM_ADMIN_IDS=[123456789,585761464]
+
+# OpenAI (for AI features)
+OPENAI_API_KEY=sk-proj-...
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 OPENAI_MODEL=gpt-4o-mini
 ```
 
@@ -70,6 +78,7 @@ After starting, verify:
 - [ ] Bot responds to /start
 - [ ] Main menu displays correctly
 - [ ] Can create a new lead
+<<<<<<< HEAD
 - [ ] AI draft lead flow shows buttons: Зберегти / Редагувати / Змінити питання
 - [ ] Can view leads list
 - [ ] Can edit lead stage
@@ -79,14 +88,28 @@ After starting, verify:
 - [ ] AI analysis shows next-step navigation buttons
   - [ ] Contacted / Qualify / Transfer
   - [ ] Додати нотатку / Наступне питання / Картка ліда
+=======
+- [ ] Can view leads list
+- [ ] Can edit lead stage
+- [ ] AI Assistant works (/ai or 🤖 button)
+- [ ] Voice mode works (🎤 Voice button)
+  - [ ] Voice messages are transcribed
+  - [ ] Text commands work in voice mode
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 - [ ] Sales pipeline accessible
 - [ ] Statistics show correctly
 
 ---
 
+<<<<<<< HEAD
 ## Copilot Features 🤖
 
 When Copilot mode is active, users can use both text and voice:
+=======
+## Voice Chat Features 🎤
+
+When Voice mode is active, users can:
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 
 | Command | Action |
 |---------|--------|
@@ -96,6 +119,7 @@ When Copilot mode is active, users can use both text and voice:
 | "знайди [name]" | Search for lead |
 | Voice message | Transcribe & process |
 
+<<<<<<< HEAD
 ### Interactive Buttons
 
 1) **Add Lead draft actions**
@@ -118,6 +142,8 @@ When Copilot mode is active, users can use both text and voice:
   - analyze: lead_id
   - note: lead_id + content
 
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 ---
 
 ## API Endpoints
@@ -140,8 +166,13 @@ When Copilot mode is active, users can use both text and voice:
 2. Verify API server is running on port 8000
 3. Check bot.log for errors
 
+<<<<<<< HEAD
 ### Copilot / voice not working?
 1. Make sure you're in Copilot mode (press 🤖 Copilot button)
+=======
+### Voice not working?
+1. Make sure you're in Voice mode (press 🎤 Voice button)
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 2. Add HUGGINGFACE_TOKEN to .env for free transcription
 3. Or ensure OPENAI_API_KEY is set for paid Whisper
 

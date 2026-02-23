@@ -40,7 +40,10 @@ from app.bot.keyboards import (
     get_back_keyboard,
     get_back_to_menu_keyboard,
     get_retry_keyboard,
+<<<<<<< HEAD
     get_dashboard_keyboard,
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
     # Sales Keyboards
     get_sales_category_keyboard,
     get_sale_stage_categories_keyboard,
@@ -58,10 +61,15 @@ from app.bot.keyboards import (
     get_notes_manage_keyboard,
     get_note_view_keyboard,
     get_note_confirm_keyboard,
+<<<<<<< HEAD
     get_ai_lead_draft_keyboard,
     get_ai_analysis_next_steps_keyboard,
 )
 from app.bot.states import LeadCreationState, LeadPasteState, AddNoteState, SearchState, SaleManagementState, AIAssistantState, VoiceChatState, CopilotState
+=======
+)
+from app.bot.states import LeadCreationState, LeadPasteState, AddNoteState, SearchState, SaleManagementState, AIAssistantState, VoiceChatState
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 from app.bot import ui
 from app.bot.keyboards import get_paste_lead_keyboard, get_paste_confirm_keyboard
 from app.core.config import settings
@@ -111,6 +119,7 @@ def _voice_quality_badge(score: float) -> str:
     return "🔴"
 
 
+<<<<<<< HEAD
 def _sanitize_telegram_html(text: str) -> str:
     """Sanitize AI text for Telegram HTML parse mode.
 
@@ -123,6 +132,8 @@ def _sanitize_telegram_html(text: str) -> str:
     return text
 
 
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 # ─────────────────────────────────────────────────────────────
 # Bot Instance
 # ─────────────────────────────────────────────────────────────
@@ -464,6 +475,7 @@ async def show_leads_list_page(callback: CallbackQuery, leads: list, title: str,
     await safe_edit(callback, header, keyboard)
 
 
+<<<<<<< HEAD
 def _build_lead_payload_from_ai(lead_data: dict, telegram_user_id: int) -> dict:
     payload = {
         "source": lead_data.get("source", "MANUAL"),
@@ -549,6 +561,8 @@ def _copilot_missing_fields_prompt(action: Optional[str], missing_fields: list[s
     return None
 
 
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 # ─────────────────────────────────────────────────────────────
 # Command Handlers
 # ─────────────────────────────────────────────────────────────
@@ -567,10 +581,17 @@ async def cmd_start(message: Message, state: FSMContext):
     user = message.from_user
     is_admin = user.id in bot_settings.TELEGRAM_ADMIN_IDS
 
+<<<<<<< HEAD
     # Main menu keyboard (static reply keyboard)
     await message.answer(
         ui.format_welcome(user.first_name, is_admin),
         reply_markup=get_main_menu_keyboard(),
+=======
+    # Main menu keyboard disabled per user request - use inline menu only
+    await message.answer(
+        ui.format_welcome(user.first_name, is_admin),
+        reply_markup=get_menu_keyboard(),
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         parse_mode="HTML"
     )
 
@@ -643,6 +664,7 @@ async def cmd_new_lead(message: Message, state: FSMContext):
     )
 
 
+<<<<<<< HEAD
 @router.message(F.text.in_(["🎤 Voice", "🤖 AI Assist", "🤖 Copilot"]))
 async def cmd_ai_assist(message: Message, state: FSMContext):
     await state.clear()
@@ -656,6 +678,39 @@ async def cmd_ai_assist(message: Message, state: FSMContext):
         "• <b>\"статистика\"</b>\n"
         "• <b>\"show hot leads\"</b>\n\n"
         "<i>Для виходу натисніть Меню або /cancel.</i>",
+=======
+@router.message(F.text == "🎤 Voice")
+async def cmd_voice(message: Message, state: FSMContext):
+    # Clear any other States but set voice chat mode
+    await state.clear()
+    await state.set_state(VoiceChatState.active)
+    await message.answer(
+        "🎤 <b>Голосовий чат УВІМКНЕНО 🎤</b>\n\n"
+        "Тепер надсилайте голосові АБО текстові повідомлення з командами:\n\n"
+        "• <b>\"додай ліда\"</b> - створити нового ліда\n"
+        "• <b>\"знайди [ім'я]\"</b> - шукати ліда\n"
+        "• <b>\"статистика\"</b> - показати статистику\n"
+        "• <b>\"покажи ліди\"</b> - список лідів\n\n"
+        "<i>Працює з голосовими повідомленнями та текстом!</i>\n\n"
+        "<i>Натисніть 'Меню' або іншу кнопку для виходу з режиму.</i>",
+        reply_markup=get_back_to_menu_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@router.message(F.text == "🤖 AI Assist")
+async def cmd_ai_assist(message: Message, state: FSMContext):
+    await state.clear()
+    await state.set_state(AIAssistantState.waiting_for_query)
+    await message.answer(
+        "🤖 <b>AI Assistant (TEXT + VOICE MODE)</b>\n\n"
+        "Ask me anything about your leads using text or voice:\n\n"
+        "• <b>\"Show hot leads\"</b> - leads with AI score ≥ 0.6\n"
+        "• <b>\"How many from scanner?\"</b> - count by source\n"
+        "• <b>\"Who is the best candidate?\"</b> - top AI score\n"
+        "• <b>\"Leads in qualified stage\"</b> - filter by stage\n\n"
+        "<i>Type your question or send voice message below...</i>",
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML"
     )
@@ -678,7 +733,11 @@ async def handle_ai_query(message: Message, state: FSMContext):
     leads = await get_leads_via_api(user_id=message.from_user.id)
     
     # Process query with AI (Ukrainian responses)
+<<<<<<< HEAD
     response = _sanitize_telegram_html(await ai_assistant.process_query(query, leads))
+=======
+    response = await ai_assistant.process_query(query, leads)
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 
     # Safe send: try HTML, fallback to plain text if markup fails
     try:
@@ -737,7 +796,11 @@ async def handle_ai_voice_query(message: Message, state: FSMContext):
         await message.answer("🤖 <i>Думаю...</i>", parse_mode="HTML")
 
         leads = await get_leads_via_api(user_id=message.from_user.id)
+<<<<<<< HEAD
         response = _sanitize_telegram_html(await ai_assistant.process_query(query_text, leads))
+=======
+        response = await ai_assistant.process_query(query_text, leads)
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         try:
             await message.answer(response, parse_mode="HTML")
         except Exception as send_err:
@@ -915,11 +978,19 @@ async def voice_edit_note(callback: CallbackQuery, state: FSMContext):
 async def handle_cancel_voice_mode(message: Message, state: FSMContext):
     """Handle cancel/exit from voice mode."""
     current_state = await state.get_state()
+<<<<<<< HEAD
     if current_state in {VoiceChatState.active.state, CopilotState.active.state, AIAssistantState.waiting_for_query.state}:
         await state.clear()
         await message.answer(
             "👋 <b>Вихід з режиму Copilot</b>\n\n"
             "Ви вийшли з режиму Copilot. Повертайтесь до меню.",
+=======
+    if current_state == VoiceChatState.active:
+        await state.clear()
+        await message.answer(
+            "👋 <b>Вихід з режиму голосу</b>\n\n"
+            "Ви вийшли з голосового режиму. Повертайтесь до меню.",
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML"
         )
@@ -934,7 +1005,10 @@ async def handle_cancel_voice_mode(message: Message, state: FSMContext):
 
 
 @router.message(F.voice, VoiceChatState.active)
+<<<<<<< HEAD
 @router.message(F.voice, CopilotState.active)
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 async def handle_voice(message: Message, state: FSMContext):
     """Handle voice messages - ONLY when voice chat mode is active."""
 
@@ -1004,8 +1078,11 @@ async def handle_voice(message: Message, state: FSMContext):
         action = parsed.get("action")
         lead_data = parsed.get("lead_data", {})
         query = parsed.get("query")
+<<<<<<< HEAD
         ui_hint = parsed.get("ui_hint", {})
         missing_fields = parsed.get("missing_fields", [])
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         
         # If no action detected, use simple rule-based fallback
         text_lower = text.lower()
@@ -1023,6 +1100,7 @@ async def handle_voice(message: Message, state: FSMContext):
                         lead_data["lead_id"] = int(lead_id_match.group(1))
             elif any(kw in text_lower for kw in ["покажи", "список", "show", "list", "ліди"]):
                 action = "list"
+<<<<<<< HEAD
 
         # Confidence gate + slot filling clarification
         if ui_hint.get("reason") == "low_confidence" and not action:
@@ -1040,6 +1118,8 @@ async def handle_voice(message: Message, state: FSMContext):
         if slot_prompt:
             await message.answer(slot_prompt, parse_mode="HTML")
             return
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         
         # Update context with action info if lead was mentioned
         if lead_data.get("lead_id") or resolved_lead_id:
@@ -1049,6 +1129,7 @@ async def handle_voice(message: Message, state: FSMContext):
             lead_name = lead_info.get("full_name") if lead_info else f"Lead #{lead_id_for_context}"
             ai_assistant.update_context(user_id, lead_id_for_context, lead_name, action)
         
+<<<<<<< HEAD
         if action == "create" and not lead_data:
             await message.answer(
                 "Щоб додати ліда, дайте мінімум один атрибут: ім'я, телефон або email.\n"
@@ -1101,6 +1182,42 @@ async def handle_voice(message: Message, state: FSMContext):
                 )
             else:
                 await message.answer(f"⚠️ Аналіз не вдався: {_api_error_text(result)}", parse_mode="HTML")
+=======
+        if action == "create" and lead_data:
+            # Build lead data for confirmation
+            lead_payload = {
+                "source": lead_data.get("source", "MANUAL"),
+                "telegram_id": str(message.from_user.id),
+            }
+            if lead_data.get("name"):
+                lead_payload["full_name"] = lead_data["name"]
+            if lead_data.get("phone"):
+                lead_payload["phone"] = lead_data["phone"]
+            if lead_data.get("email"):
+                lead_payload["email"] = lead_data["email"]
+            if lead_data.get("domain"):
+                lead_payload["business_domain"] = lead_data["domain"]
+            
+            # Show confirmation with inline keyboard
+            name = lead_payload.get("full_name", "—")
+            phone = lead_payload.get("phone", "—")
+            email = lead_payload.get("email", "—")
+            source = lead_payload.get("source", "MANUAL")
+            
+            confirm_text = (
+                f"📋 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
+                f"Створити ліда з голосових даних?\n\n"
+                f"👤 <b>Ім'я:</b> {name}\n"
+                f"📞 <b>Телефон:</b> {phone}\n"
+                f"📧 <b>Email:</b> {email}\n"
+                f"📡 <b>Джерело:</b> {source}\n\n"
+                "<i>Виберіть дію:</i>"
+            )
+            
+            await state.set_state(VoiceConfirmState.waiting_for_create_confirm)
+            await state.update_data(pending_lead_data=lead_payload)
+            await message.answer(confirm_text, reply_markup=get_voice_confirm_keyboard(data_type="lead"), parse_mode="HTML")
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
             return
                 
         elif action == "note" and lead_data.get("lead_id"):
@@ -1264,7 +1381,11 @@ async def handle_voice(message: Message, state: FSMContext):
         else:
             # Default: try AI assistant as fallback
             leads = await get_leads_via_api(user_id=message.from_user.id)
+<<<<<<< HEAD
             response = _sanitize_telegram_html(await ai_assistant.process_query(text, leads))
+=======
+            response = await ai_assistant.process_query(text, leads)
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
             await message.answer(response, parse_mode="HTML")
                 
     except Exception as e:
@@ -1280,16 +1401,25 @@ async def handle_voice_inactive(message: Message, state: FSMContext):
     """Handle voice messages when voice chat is NOT active."""
     # Inform user that voice is not active
     await message.answer(
+<<<<<<< HEAD
         "🎤 <b>Copilot режим не активний</b>\n\n"
         "Для використання голосу/тексту натисніть <b>🤖 Copilot</b> (або старі кнопки для сумісності).\n\n"
         "<i>Голосові повідомлення обробляються в активному Copilot режимі.</i>",
+=======
+        "🎤 <b>Голосовий чат не активний</b>\n\n"
+        "Для використання голосових команд натисніть <b>🎤 Voice</b> у меню.\n\n"
+        "<i>Голосові повідомлення обробляються лише в режимі голосового чату.</i>",
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         reply_markup=get_back_to_menu_keyboard(),
         parse_mode="HTML"
     )
 
 
 @router.message(VoiceChatState.active)
+<<<<<<< HEAD
 @router.message(CopilotState.active)
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 async def handle_voice_text_commands(message: Message, state: FSMContext):
     """Handle TEXT commands in Voice Chat mode - both voice and text work!"""
 
@@ -1307,8 +1437,13 @@ async def handle_voice_text_commands(message: Message, state: FSMContext):
     if text_lower in cancel_keywords or text == "/cancel":
         await state.clear()
         await message.answer(
+<<<<<<< HEAD
             "👋 <b>Вихід з режиму Copilot</b>\n\n"
             "Ви вийшли з режиму Copilot. Повертайтесь до меню.",
+=======
+            "👋 <b>Вихід з режиму голосу</b>\n\n"
+            "Ви вийшли з голосового режиму. Повертайтесь до меню.",
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML"
         )
@@ -1325,8 +1460,11 @@ async def handle_voice_text_commands(message: Message, state: FSMContext):
         action = parsed.get("action")
         lead_data = parsed.get("lead_data", {})
         query = parsed.get("query")
+<<<<<<< HEAD
         ui_hint = parsed.get("ui_hint", {})
         missing_fields = parsed.get("missing_fields", [])
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         
         # If no action detected, use simple rule-based fallback (flexible)
         text_lower = text.lower()
@@ -1345,6 +1483,7 @@ async def handle_voice_text_commands(message: Message, state: FSMContext):
             # LIST - flexible
             elif any(k in text_lower for k in ["лід", "ліди", "покажи", "show", "list"]):
                 action = "list"
+<<<<<<< HEAD
 
         # Confidence gate + slot filling clarification
         if ui_hint.get("reason") == "low_confidence" and not action:
@@ -1415,6 +1554,43 @@ async def handle_voice_text_commands(message: Message, state: FSMContext):
                 )
             else:
                 await message.answer(f"⚠️ Аналіз не вдався: {_api_error_text(result)}", parse_mode="HTML")
+=======
+        
+        if action == "create" and lead_data:
+            # Build lead data for confirmation
+            lead_payload = {
+                "source": lead_data.get("source", "MANUAL"),
+                "telegram_id": str(message.from_user.id),
+            }
+            if lead_data.get("name"):
+                lead_payload["full_name"] = lead_data["name"]
+            if lead_data.get("phone"):
+                lead_payload["phone"] = lead_data["phone"]
+            if lead_data.get("email"):
+                lead_payload["email"] = lead_data["email"]
+            if lead_data.get("domain"):
+                lead_payload["business_domain"] = lead_data["domain"]
+            
+            # Show confirmation with inline keyboard
+            name = lead_payload.get("full_name", "—")
+            phone = lead_payload.get("phone", "—")
+            email = lead_payload.get("email", "—")
+            source = lead_payload.get("source", "MANUAL")
+            
+            confirm_text = (
+                f"📋 <b>ПІДТВЕРДЖЕННЯ</b>\n\n"
+                f"Створити ліда з текстових даних?\n\n"
+                f"👤 <b>Ім'я:</b> {name}\n"
+                f"📞 <b>Телефон:</b> {phone}\n"
+                f"📧 <b>Email:</b> {email}\n"
+                f"📡 <b>Джерело:</b> {source}\n\n"
+                "<i>Виберіть дію:</i>"
+            )
+            
+            await state.set_state(VoiceConfirmState.waiting_for_create_confirm)
+            await state.update_data(pending_lead_data=lead_payload)
+            await message.answer(confirm_text, reply_markup=get_voice_confirm_keyboard(data_type="lead"), parse_mode="HTML")
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
             return
                 
         elif action == "note" and lead_data.get("lead_id"):
@@ -1578,7 +1754,11 @@ async def handle_voice_text_commands(message: Message, state: FSMContext):
         else:
             # Default: try AI assistant as fallback
             leads = await get_leads_via_api(user_id=message.from_user.id)
+<<<<<<< HEAD
             response = _sanitize_telegram_html(await ai_assistant.process_query(text, leads))
+=======
+            response = await ai_assistant.process_query(text, leads)
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
             await message.answer(response, parse_mode="HTML")
                 
     except Exception as e:
@@ -1960,15 +2140,26 @@ async def settings_ai(callback: CallbackQuery):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "📝 <b>ЯК КОРИСТУВАТИСЯ:</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+<<<<<<< HEAD
         "<b>1. Copilot (🤖 Text + Voice):</b>\n"
         "• Натисніть кнопку <b>🤖 Copilot</b> у меню\n"
+=======
+        "<b>1. AI Assist (🤖 Text + Voice):</b>\n"
+        "• Натисніть кнопку <b>🤖 AI Assist</b> у меню\n"
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         "• Надсилайте запити текстом або голосом:\n"
         f"  • <code>Show hot leads</code> — гарячі ліди (score ≥ {settings.MIN_TRANSFER_SCORE:.2f})\n"
         "  • <code>How many from scanner?</code> — ліди за джерелом\n"
         "  • <code>Who is the best candidate?</code> — топ лід за AI\n"
         "  • <code>Leads in qualified stage</code> — фільтр за стадією\n"
         "  • <code>Show all leads</code> — всі ліди\n\n"
+<<<<<<< HEAD
         "<b>2. Швидкі команди в Copilot:</b>\n"
+=======
+        "<b>2. Голосовий режим (🎤 Voice):</b>\n"
+        "• Натисніть <b>🎤 Voice</b> у меню\n"
+        "• Надсилайте голосові повідомлення:\n"
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
         "  • <code>додай ліда</code> — створити нового ліда\n"
         "  • <code>покажи ліди</code> — показати список\n"
         "  • <code>статистика</code> — показати статистику\n"
@@ -2547,6 +2738,7 @@ async def handle_note_delete(callback: CallbackQuery, state: FSMContext):
 
 
 # ─────────────────────────────────────────────────────────────
+<<<<<<< HEAD
 # AI Interactive Buttons (lead draft + analysis navigation)
 # ─────────────────────────────────────────────────────────────
 
@@ -2653,6 +2845,8 @@ async def ai_analysis_next_question(callback: CallbackQuery):
 
 
 # ─────────────────────────────────────────────────────────────
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 # Search FSM
 # ─────────────────────────────────────────────────────────────
 

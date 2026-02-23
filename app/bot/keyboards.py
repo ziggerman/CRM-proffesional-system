@@ -13,6 +13,7 @@ from app.bot.ui import STAGE_META, SOURCE_META, DOMAIN_META
 # ─────────────────────────────────────────────────────────────
 
 def get_main_menu_keyboard() -> None:
+<<<<<<< HEAD
     """Static reply keyboard for quick access from chat input area."""
     kb = ReplyKeyboardBuilder()
     kb.row(
@@ -31,6 +32,10 @@ def get_main_menu_keyboard() -> None:
         KeyboardButton(text="⚙️ Settings"),
     )
     return kb.as_markup(resize_keyboard=True, is_persistent=True)
+=======
+    """Main menu keyboard disabled."""
+    return None
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 
 
 # ─────────────────────────────────────────────────────────────
@@ -84,6 +89,7 @@ def get_paste_confirm_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+<<<<<<< HEAD
 def get_ai_lead_draft_keyboard() -> InlineKeyboardMarkup:
     """AI draft lead actions: save/edit/rephrase."""
     builder = InlineKeyboardBuilder()
@@ -108,6 +114,8 @@ def get_ai_analysis_next_steps_keyboard(lead_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+=======
+>>>>>>> 4d0f3672a597e6fa6b319c6a778a3994be21a2f9
 # ─────────────────────────────────────────────────────────────
 # Leads Categories
 # ─────────────────────────────────────────────────────────────

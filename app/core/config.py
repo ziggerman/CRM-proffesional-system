@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(default="dev_very_secret_key_change_me_in_prod")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30  # 30 days for refresh token
+    
+    # Rate Limiting & Brute-Force Protection
+    BRUTE_FORCE_MAX_ATTEMPTS: int = 5  # Max failed attempts before lockout
+    BRUTE_FORCE_LOCKOUT_MINUTES: int = 15  # Lockout duration in minutes
 
     # CORS
     ALLOWED_ORIGINS: list[str] = ["*"]

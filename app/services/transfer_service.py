@@ -94,11 +94,12 @@ class TransferService:
             )
 
         # All gates passed — execute transfer atomically
-        lead.stage = ColdStage.TRANSFERRED
-        await self.lead_repo.save(lead)
+        async with self.lead_repo.db.begin_nested():
+            lead.stage = ColdStage.TRANSFERRED
+            await self.lead_repo.save(lead)
 
-        sale = Sale(lead_id=lead.id, stage=SaleStage.NEW, amount=amount)
-        sale = await self.sale_repo.create(sale)
+            sale = Sale(lead_id=lead.id, stage=SaleStage.NEW, amount=amount)
+            sale = await self.sale_repo.create(sale)
 
         # Broadcast update (Step 8.2)
         await ws_manager.broadcast({"type": "SALE_CREATED", "id": sale.id, "lead_id": lead.id, "stage": sale.stage.value})

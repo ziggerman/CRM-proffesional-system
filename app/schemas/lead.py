@@ -16,15 +16,49 @@ from app.core.sanitization import sanitize_short, sanitize_long
 
 class LeadCreate(BaseModel):
     """Schema for creating a new lead."""
+    full_name: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=64)
+    email: Optional[str] = Field(None, max_length=255)
     source: LeadSource
     business_domain: Optional[BusinessDomain] = None
     telegram_id: Optional[str] = Field(None, max_length=64)
 
+    @field_validator("source", mode="before")
+    @classmethod
+    def normalize_source(cls, v):
+        if isinstance(v, str):
+            return v.strip().upper()
+        return v
+
+    @field_validator("business_domain", mode="before")
+    @classmethod
+    def normalize_domain(cls, v):
+        if isinstance(v, str):
+            return v.strip().upper()
+        return v
+
 
 class LeadUpdate(BaseModel):
     """Schema for updating lead details."""
+    full_name: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=64)
+    email: Optional[str] = Field(None, max_length=255)
     source: Optional[LeadSource] = None
     business_domain: Optional[BusinessDomain] = None
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def normalize_source(cls, v):
+        if isinstance(v, str):
+            return v.strip().upper()
+        return v
+
+    @field_validator("business_domain", mode="before")
+    @classmethod
+    def normalize_domain(cls, v):
+        if isinstance(v, str):
+            return v.strip().upper()
+        return v
 
 
 class LeadStageUpdate(BaseModel):
@@ -60,6 +94,9 @@ class LeadResponse(BaseModel):
     """Schema for lead response."""
     id: int
     telegram_id: Optional[str]
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
     source: LeadSource
     stage: ColdStage
     business_domain: Optional[BusinessDomain]

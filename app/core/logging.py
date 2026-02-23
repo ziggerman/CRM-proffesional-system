@@ -2,8 +2,10 @@
 Structured logging setup with fallback to standard library.
 Step 2.1 — Observability
 """
+import json
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from typing import Any
 
 try:
@@ -15,8 +17,44 @@ except ImportError:
 from app.core.config import settings
 
 
+class JsonFormatter(logging.Formatter):
+    """Simple JSON formatter for production logs."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "request_id": getattr(record, "request_id", None),
+            "correlation_id": getattr(record, "correlation_id", None),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def _build_handlers() -> list[logging.Handler]:
+    handlers: list[logging.Handler] = []
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    handlers.append(stdout_handler)
+
+    file_handler = RotatingFileHandler(
+        filename="api.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    handlers.append(file_handler)
+    return handlers
+
+
 def setup_logging() -> None:
     """Configure logging. Uses structlog if available, otherwise standard logging."""
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+
     if HAS_STRUCTLOG:
         shared_processors = [
             structlog.stdlib.add_log_level,
@@ -40,7 +78,6 @@ def setup_logging() -> None:
             wrapper_class=structlog.stdlib.BoundLogger,
         )
 
-        handler = logging.StreamHandler(sys.stdout)
         formatter = structlog.stdlib.ProcessorFormatter(
             foreign_pre_chain=shared_processors,
             processors=[
@@ -48,18 +85,20 @@ def setup_logging() -> None:
                 renderer,
             ],
         )
-        handler.setFormatter(formatter)
-        
-        root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
+
+        for handler in _build_handlers():
+            handler.setFormatter(formatter)
+            root_logger.addHandler(handler)
         root_logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
     else:
-        # Fallback to standard logging
-        logging.basicConfig(
-            level=logging.DEBUG if settings.DEBUG else logging.INFO,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            stream=sys.stdout
-        )
+        # Fallback to standard logging with JSON in production
+        for handler in _build_handlers():
+            if settings.DEBUG:
+                handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+            else:
+                handler.setFormatter(JsonFormatter())
+            root_logger.addHandler(handler)
+        root_logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
         logging.info("Structlog not found, falling back to standard logging.")
 
     # Set third-party loggers

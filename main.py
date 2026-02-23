@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import (
@@ -12,6 +14,7 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.core.logging import setup_logging
 from app.core.middleware import RequestLoggingMiddleware, ErrorHandlingMiddleware
+from app.api.errors import build_error_payload
 from app.api.rate_limit import RateLimitMiddleware
 
 try:
@@ -50,6 +53,38 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    detail = exc.detail
+    if isinstance(detail, dict) and {"code", "message", "detail", "context"}.issubset(detail.keys()):
+        payload = detail
+        payload["context"] = payload.get("context") or {}
+        payload["context"].setdefault("request_id", getattr(request.state, "request_id", None))
+        payload["context"].setdefault("correlation_id", getattr(request.state, "correlation_id", None))
+    else:
+        payload = build_error_payload(
+            code="http_error",
+            message="Request failed",
+            detail=detail,
+            request=request,
+        )
+
+    return JSONResponse(status_code=exc.status_code, content=payload)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=422,
+        content=build_error_payload(
+            code="validation_error",
+            message="Validation failed",
+            detail=exc.errors(),
+            request=request,
+        ),
+    )
 
 # Instrument Prometheus
 if HAS_PROMETHEUS:

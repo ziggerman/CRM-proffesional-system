@@ -6,6 +6,7 @@ import os
 import re
 import json
 import logging
+from io import BytesIO
 from typing import Optional
 
 import httpx
@@ -51,6 +52,7 @@ class UnifiedAIService:
         self.huggingface_token = os.getenv("HUGGINGFACE_TOKEN")
         self.local_whisper_model = os.getenv("LOCAL_WHISPER_MODEL", "base")  # tiny, base, small
         self.api_base_url = "http://localhost:8000"
+        self._openai_disabled_reason: Optional[str] = None
         
         # Context tracking per user (in production, use Redis or DB)
         self._user_context: dict[int, dict] = {}
@@ -92,29 +94,62 @@ class UnifiedAIService:
         Transcribe voice to text.
         Priority: Local (faster-whisper) > HuggingFace API > OpenAI API
         """
+        # Normalize incoming Telegram payload (bytes or BytesIO)
+        voice_bytes = self._ensure_bytes(voice_content)
+        if not voice_bytes:
+            logger.error("Empty voice payload received")
+            return None
+
         # 1. Try local faster-whisper (FREE, offline, fastest)
         if FASTER_WHISPER_AVAILABLE:
-            result = await self._transcribe_local(voice_content)
+            result = await self._transcribe_local(voice_bytes)
             if result:
                 logger.info("Used local faster-whisper transcription")
                 return result
         
         # 2. Try HuggingFace API (FREE, online)
         if self.huggingface_token:
-            result = await self._transcribe_huggingface(voice_content)
+            result = await self._transcribe_huggingface(voice_bytes)
             if result:
                 logger.info("Used HuggingFace API transcription")
                 return result
         
         # 3. Try OpenAI Whisper (paid, reliable)
         if self.openai_api_key:
-            result = await self._transcribe_openai(voice_content)
+            result = await self._transcribe_openai(voice_bytes)
             if result:
                 logger.info("Used OpenAI Whisper transcription")
                 return result
         
         logger.error("No voice transcription service available")
         return None
+
+    def _ensure_bytes(self, voice_content) -> bytes:
+        """Normalize voice payload from aiogram download_file (BytesIO) or raw bytes."""
+        if voice_content is None:
+            return b""
+        if isinstance(voice_content, (bytes, bytearray)):
+            return bytes(voice_content)
+        if isinstance(voice_content, BytesIO):
+            return voice_content.getvalue()
+        # aiogram may return file-like objects
+        if hasattr(voice_content, "getvalue"):
+            try:
+                return voice_content.getvalue()
+            except Exception:
+                pass
+        if hasattr(voice_content, "read"):
+            try:
+                pos = voice_content.tell() if hasattr(voice_content, "tell") else None
+                if hasattr(voice_content, "seek"):
+                    voice_content.seek(0)
+                data = voice_content.read()
+                if pos is not None and hasattr(voice_content, "seek"):
+                    voice_content.seek(pos)
+                return data if isinstance(data, (bytes, bytearray)) else b""
+            except Exception:
+                return b""
+        return b""
     
     async def _transcribe_local(self, voice_content: bytes) -> str | None:
         """Transcribe using local faster-whisper (FREE, offline)."""
@@ -339,7 +374,7 @@ class UnifiedAIService:
     async def process_query(self, query: str, leads: list) -> str:
         """Process natural language query about leads using AI."""
         if not self.openai_api_key:
-            return self._simple_query_response(query, leads)
+            return self._format_fallback_response(self._simple_query_response(query, leads))
         
         try:
             context = self._prepare_context(leads)
@@ -369,11 +404,24 @@ class UnifiedAIService:
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
             else:
-                return self._simple_query_response(query, leads)
+                # If API key is invalid, disable OpenAI for current process
+                # and immediately switch to local rule-based fallback.
+                if response.status_code == 401:
+                    logger.warning("OpenAI key is invalid (401). Switching to local fallback responses.")
+                    self.openai_api_key = None
+                    self._openai_disabled_reason = "invalid_api_key"
+                return self._format_fallback_response(self._simple_query_response(query, leads))
                 
         except Exception as e:
             logger.error(f"AI query error: {e}")
-            return self._simple_query_response(query, leads)
+            return self._format_fallback_response(self._simple_query_response(query, leads))
+
+    def _format_fallback_response(self, content: str) -> str:
+        """Attach a small notice when OpenAI is unavailable and fallback rules are used."""
+        if self._openai_disabled_reason == "invalid_api_key":
+            notice = "⚠️ <i>OpenAI тимчасово недоступний (невірний API ключ). Працюю в локальному режимі.</i>\n\n"
+            return f"{notice}{content}"
+        return content
     
     def _simple_query_response(self, query: str, leads: list) -> str:
         """Simple rule-based response when AI is not available."""

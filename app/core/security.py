@@ -1,6 +1,7 @@
 """
 API Security module.
 Step 3.1 — JWT Authentication
+Step 4 — Enhanced Security: Refresh Tokens, RBAC, Rate Limiting
 """
 from datetime import datetime, UTC, timedelta
 from typing import Optional, Annotated
@@ -15,7 +16,7 @@ from starlette import status
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User, UserRole
-from app.schemas.token import TokenData
+from app.schemas.token import TokenData, Token
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -39,9 +40,33 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = datetime.now(UTC) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
+
+def create_refresh_token(data: dict) -> str:
+    """Create a new JWT refresh token (longer expiry)."""
+    to_encode = data.copy()
+    expire = datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire, "type": "refresh"})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return encoded_jwt
+
+
+def verify_refresh_token(token: str) -> Optional[dict]:
+    """
+    Verify refresh token and return payload if valid.
+    Returns None if invalid or expired.
+    """
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        # Verify this is a refresh token
+        if payload.get("type") != "refresh":
+            return None
+        return payload
+    except JWTError:
+        return None
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(security),

@@ -28,23 +28,9 @@ def upgrade() -> None:
     op.create_index('ix_leads_first_response_at', 'leads', ['first_response_at'])
     op.create_index('ix_leads_sla_deadline_at', 'leads', ['sla_deadline_at'])
     op.create_index('ix_leads_is_overdue', 'leads', ['is_overdue'])
-    
-    # Add activity log table for tracking lead response times
-    op.create_table(
-        'lead_activities',
-        sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('lead_id', sa.Integer(), sa.ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, index=True),
-        sa.Column('activity_type', sa.String(50), nullable=False),  # 'created', 'contacted', 'qualified', 'note_added', etc.
-        sa.Column('description', sa.Text(), nullable=True),
-        sa.Column('created_by', sa.String(100), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-    )
-    op.create_index('ix_lead_activities_created_at', 'lead_activities', ['created_at'])
 
 
 def downgrade() -> None:
-    op.drop_index('ix_lead_activities_created_at', table_name='lead_activities')
-    op.drop_table('lead_activities')
     op.drop_index('ix_leads_is_overdue', table_name='leads')
     op.drop_index('ix_leads_sla_deadline_at', table_name='leads')
     op.drop_index('ix_leads_first_response_at', table_name='leads')

@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from app.models.note import LeadNote
     from app.models.attachment import LeadAttachment
     from app.models.history import LeadHistory
-    from app.models.activity import LeadActivity
 
 
 class LeadSource(str, enum.Enum):
@@ -189,12 +188,4 @@ class Lead(Base):
         back_populates="lead",
         cascade="all, delete-orphan",
         order_by="LeadHistory.created_at.desc()"
-    )
-    
-    # Relationship to Activities (for KPI tracking)
-    activities: Mapped[list["LeadActivity"]] = relationship(
-        "LeadActivity",
-        back_populates="lead",
-        cascade="all, delete-orphan",
-        order_by="LeadActivity.created_at.desc()"
     )

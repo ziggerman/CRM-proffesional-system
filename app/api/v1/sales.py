@@ -1,11 +1,12 @@
 """
 Sales API endpoints.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from starlette import status
 
 from app.core.deps import get_sale_repo, get_transfer_service
 from app.models.sale import SaleStage
+from app.api.errors import raise_api_error
 from app.schemas.sale import (
     SaleResponse,
     SaleListResponse,
@@ -24,11 +25,22 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 def _not_found(sale_id: int):
-    raise HTTPException(status_code=404, detail=f"Sale {sale_id} not found")
+    raise_api_error(
+        status_code=404,
+        code="sale_not_found",
+        message="Sale not found",
+        detail=f"Sale {sale_id} not found",
+        context={"sale_id": sale_id},
+    )
 
 
 def _bad_request(msg: str):
-    raise HTTPException(status_code=400, detail=msg)
+    raise_api_error(
+        status_code=400,
+        code="bad_request",
+        message="Bad request",
+        detail=msg,
+    )
 
 
 # ──────────────────────────────────────────────
@@ -37,14 +49,21 @@ def _bad_request(msg: str):
 
 @router.get("", response_model=SaleListResponse)
 async def list_sales(
-    stage: SaleStage | None = Query(default=None),
+    stage: str | None = Query(default=None),
     page: int = Query(default=1, ge=1, description="Page number"),
     page_size: int = Query(default=50, ge=1, le=200, description="Items per page"),
     repo: SaleRepository = Depends(get_sale_repo),
 ):
     """List sales with pagination."""
+    stage_normalized = None
+    if stage is not None:
+        try:
+            stage_normalized = SaleStage(str(stage).strip().upper())
+        except Exception:
+            _bad_request(f"Invalid stage. Allowed values: {[s.value for s in SaleStage]}")
+
     offset = (page - 1) * page_size
-    items, total = await repo.get_all(stage=stage, offset=offset, limit=page_size)
+    items, total = await repo.get_all(stage=stage_normalized, offset=offset, limit=page_size)
     
     total_pages = (total + page_size - 1) // page_size
     
@@ -139,8 +158,11 @@ async def get_sale_by_lead(
     """
     sale = await repo.get_by_lead_id(lead_id)
     if not sale:
-        raise HTTPException(
-            status_code=404, 
-            detail=f"No sale found for lead {lead_id}"
+        raise_api_error(
+            status_code=404,
+            code="sale_not_found",
+            message="Sale not found for lead",
+            detail=f"No sale found for lead {lead_id}",
+            context={"lead_id": lead_id},
         )
     return sale

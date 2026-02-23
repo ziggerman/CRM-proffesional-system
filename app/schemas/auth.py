@@ -10,3 +10,8 @@ class LoginRequest(BaseModel):
 class PasswordChangeRequest(BaseModel):
     """Schema for password change/setup."""
     password: str = Field(..., min_length=8, max_length=128)
+
+
+class RefreshTokenRequest(BaseModel):
+    """Schema for refresh token request."""
+    refresh_token: str

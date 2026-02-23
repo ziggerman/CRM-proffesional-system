@@ -4,7 +4,7 @@ Pydantic schemas for Sale API.
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.sale import SaleStage
 
@@ -25,6 +25,13 @@ class SaleStageUpdate(BaseModel):
     """Schema for updating sale stage."""
     stage: SaleStage
     amount: Optional[int] = Field(None, ge=0)
+
+    @field_validator("stage", mode="before")
+    @classmethod
+    def normalize_stage(cls, v):
+        if isinstance(v, str):
+            return v.strip().upper()
+        return v
 
 
 class SaleUpdate(BaseModel):

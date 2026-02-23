@@ -1,5 +1,6 @@
 """
 Rate limiting middleware using Redis.
+Step 4 — Enhanced Security: Rate Limiting & Brute-Force Protection
 """
 import time
 import logging
@@ -10,9 +11,13 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from jose import jwt
+from app.api.errors import build_error_payload
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Brute-force protection flag (set to True when Redis is available)
+brute_force_store = True
 
 
 class RateLimitConfig:
@@ -27,6 +32,10 @@ class RateLimitConfig:
         "/api/v1/leads/analyze": {"requests": 10, "window": 60},
         "/api/v1/sales": {"requests": 50, "window": 60},
     }
+    
+    # Brute-force protection settings (moved from config for easier access)
+    BRUTE_FORCE_MAX_ATTEMPTS = 5  # Max failed login attempts
+    BRUTE_FORCE_LOCKOUT_MINUTES = 15  # Lockout duration
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -119,12 +128,20 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 
                 return JSONResponse(
                     status_code=429,
-                    content={
-                        "error": "Rate limit exceeded",
-                        "retry_after": ttl,
-                        "limit": requests_limit,
-                        "window": window,
-                    },
+                    content=build_error_payload(
+                        code="rate_limit_exceeded",
+                        message="Rate limit exceeded",
+                        detail={
+                            "retry_after": ttl,
+                            "limit": requests_limit,
+                            "window": window,
+                        },
+                        context={
+                            "path": request.url.path,
+                            "client_ip": client_ip,
+                        },
+                        request=request,
+                    ),
                     headers={
                         "X-RateLimit-Limit": str(requests_limit),
                         "X-RateLimit-Remaining": "0",

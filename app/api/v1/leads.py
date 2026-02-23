@@ -1,7 +1,7 @@
 """
 Lead API endpoints.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Header, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from starlette import status
@@ -13,10 +13,12 @@ from pathlib import Path
 
 from app.core.deps import get_lead_service, get_transfer_service, get_history_repo
 from app.repositories.history_repo import HistoryRepository
-from app.services.lead_service import LeadService, LeadNotFoundError, LeadStageError, DuplicateLeadError
+from app.services.lead_service import LeadService, LeadNotFoundError, LeadStageError, DuplicateLeadError, MandatoryFieldsError
 from app.services.transfer_service import TransferService, TransferError
 from app.ai.ai_service import AIServiceError
-from app.models.lead import ColdStage
+from app.models.lead import ColdStage, LeadSource, BusinessDomain
+from app.api.errors import raise_api_error
+from app.core.idempotency import idempotency_store
 from app.models.user import UserRole
 import base64
 import json
@@ -43,11 +45,32 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 def _not_found(lead_id: int):
-    raise HTTPException(status_code=404, detail=f"Lead {lead_id} not found")
+    raise_api_error(
+        status_code=404,
+        code="lead_not_found",
+        message="Lead not found",
+        detail=f"Lead {lead_id} not found",
+        context={"lead_id": lead_id},
+    )
 
 
 def _bad_request(msg: str):
-    raise HTTPException(status_code=400, detail=msg)
+    raise_api_error(
+        status_code=400,
+        code="bad_request",
+        message="Bad request",
+        detail=msg,
+    )
+
+
+def _normalize_optional_enum(value: str | None, enum_cls, field: str):
+    if value is None:
+        return None
+    try:
+        return enum_cls(str(value).strip().upper())
+    except Exception:
+        allowed = [e.value for e in enum_cls]
+        _bad_request(f"Invalid {field}. Allowed values: {allowed}")
 
 
 # ──────────────────────────────────────────────
@@ -56,20 +79,30 @@ def _bad_request(msg: str):
 
 @router.post("", response_model=LeadResponse, status_code=status.HTTP_201_CREATED)
 async def create_lead(
+    request: Request,
     data: LeadCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     svc: LeadService = Depends(get_lead_service),
 ):
     """Create a new lead. Source is required; business_domain is optional."""
+    if idempotency_key:
+        cache_key = f"idem:create_lead:{idempotency_key}"
+        cached = await idempotency_store.get(cache_key)
+        if cached:
+            return cached
+
     try:
         lead = await svc.create_lead(data)
+        if idempotency_key:
+            await idempotency_store.set(cache_key, LeadResponse.model_validate(lead).model_dump(mode="json"), ttl_seconds=900)
         return lead
     except DuplicateLeadError as e:
-        raise HTTPException(
+        raise_api_error(
             status_code=409,
-            detail={
-                "message": f"A lead with this {e.field} already exists.",
-                "existing_lead_id": e.existing_id,
-            },
+            code="duplicate_lead",
+            message="Duplicate lead",
+            detail=f"A lead with this {e.field} already exists.",
+            context={"existing_lead_id": e.existing_id, "field": e.field},
         )
 
 
@@ -85,11 +118,14 @@ async def list_leads(
     svc: LeadService = Depends(get_lead_service),
 ):
     """List leads with pagination and filters."""
+    source_normalized = _normalize_optional_enum(source, LeadSource, "source")
+    business_domain_normalized = _normalize_optional_enum(business_domain, BusinessDomain, "business_domain")
+
     offset = (page - 1) * page_size
     items, total = await svc.get_leads(
         stage=stage,
-        source=source,
-        business_domain=business_domain,
+        source=source_normalized,
+        business_domain=business_domain_normalized,
         assigned_to_id=assigned_to_id,
         telegram_id=telegram_id,
         offset=offset,
@@ -124,6 +160,9 @@ async def list_leads_cursor(
     For large datasets (>10K items), prefer this over page-based pagination.
     Use 'next_cursor' from response to get next page.
     """
+    source_normalized = _normalize_optional_enum(source, LeadSource, "source")
+    business_domain_normalized = _normalize_optional_enum(business_domain, BusinessDomain, "business_domain")
+
     # Decode cursor
     cursor_id = None
     if cursor:
@@ -138,8 +177,8 @@ async def list_leads_cursor(
         cursor_id=cursor_id,
         limit=limit,
         stage=stage,
-        source=source,
-        business_domain=business_domain,
+        source=source_normalized,
+        business_domain=business_domain_normalized,
         assigned_to_id=assigned_to_id,
     )
     
@@ -311,6 +350,11 @@ async def update_stage(
         _not_found(lead_id)
     except LeadStageError as e:
         _bad_request(str(e))
+    except MandatoryFieldsError as e:
+        _bad_request(
+            f"Cannot transition to {e.stage.value}. Missing required fields: {', '.join(e.missing_fields)}. "
+            f" Please fill in these fields before advancing the lead."
+        )
 
 
 class StageRollbackRequest(BaseModel):
@@ -491,11 +535,19 @@ async def list_lead_notes(
 @router.post("/{lead_id}/notes", response_model=NoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_lead_note(
     lead_id: int,
+    request: Request,
     data: NoteCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     svc: LeadService = Depends(get_lead_service),
 ):
     """Add a note to a lead."""
     from app.models.note import LeadNote
+
+    if idempotency_key:
+        cache_key = f"idem:create_note:{lead_id}:{idempotency_key}"
+        cached = await idempotency_store.get(cache_key)
+        if cached:
+            return cached
     
     lead = await svc.get_lead(lead_id)
     
@@ -512,6 +564,9 @@ async def create_lead_note(
     session.add(note)
     await session.flush()
     await session.refresh(note)
+
+    if idempotency_key:
+        await idempotency_store.set(cache_key, NoteResponse.model_validate(note).model_dump(mode="json"), ttl_seconds=900)
     
     return note
 

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 class Token(BaseModel):
     """Token response schema."""
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str
 
 

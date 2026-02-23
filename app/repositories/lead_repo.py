@@ -276,3 +276,128 @@ class LeadRepository:
             next_cursor = leads[-1].id  # Last item's ID
         
         return leads, total, next_cursor
+
+    # ──────────────────────────────────────────────
+    # Step 6: Lead Deduplication
+    # ──────────────────────────────────────────────
+    
+    async def find_duplicates(
+        self,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        telegram_id: Optional[str] = None,
+    ) -> list[Lead]:
+        """
+        Find potential duplicate leads by contact fields.
+        Used for soft deduplication - warns about potential duplicates.
+        """
+        if not any([phone, email, telegram_id]):
+            return []
+        
+        conditions = []
+        if phone:
+            conditions.append(Lead.phone == phone)
+        if email:
+            conditions.append(Lead.email == email)
+        if telegram_id:
+            conditions.append(Lead.telegram_id == telegram_id)
+        
+        stmt = (
+            select(Lead)
+            .where(Lead.is_deleted == False)
+            .where(or_(*conditions))
+            .order_by(Lead.created_at.desc())
+        )
+        
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+    
+    async def check_hard_duplicate(
+        self,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        telegram_id: Optional[str] = None,
+    ) -> Optional[Lead]:
+        """
+        Check for exact duplicate using all available fields.
+        Used for hard deduplication - blocks creation of duplicates.
+        Returns the existing lead if found, None otherwise.
+        """
+        if not any([phone, email, telegram_id]):
+            return None
+        
+        # For hard duplicate, we require exact match on at least 2 fields
+        # or exact match on one field plus non-null
+        match_count = 0
+        if phone:
+            match_count += 1
+        if email:
+            match_count += 1
+        if telegram_id:
+            match_count += 1
+        
+        # Need at least 2 fields to match for hard duplicate
+        if match_count < 2:
+            return None
+        
+        conditions = []
+        if phone:
+            conditions.append(Lead.phone == phone)
+        if email:
+            conditions.append(Lead.email == email)
+        if telegram_id:
+            conditions.append(Lead.telegram_id == telegram_id)
+        
+        stmt = (
+            select(Lead)
+            .where(Lead.is_deleted == False)
+            .where(or_(*conditions))
+            .order_by(Lead.created_at.desc())
+            .limit(1)
+        )
+        
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+    
+    async def merge_duplicates(self, primary_id: int, duplicate_ids: list[int]) -> Lead:
+        """
+        Merge duplicate leads into a primary lead.
+        - Moves notes, history, attachments from duplicates to primary
+        - Marks duplicates as deleted
+        - Returns the updated primary lead
+        """
+        primary = await self.get_by_id(primary_id)
+        if not primary:
+            raise ValueError(f"Primary lead {primary_id} not found")
+        
+        from app.models.note import LeadNote
+        from app.models.history import LeadHistory
+        from app.models.attachment import LeadAttachment
+        
+        for dup_id in duplicate_ids:
+            dup = await self.get_by_id(dup_id)
+            if not dup:
+                continue
+            
+            # Merge notes
+            notes_stmt = select(LeadNote).where(LeadNote.lead_id == dup_id)
+            notes_result = await self.db.execute(notes_stmt)
+            notes = notes_result.scalars().all()
+            for note in notes:
+                note.lead_id = primary_id
+            
+            # Merge attachments
+            attach_stmt = select(LeadAttachment).where(LeadAttachment.lead_id == dup_id)
+            attach_result = await self.db.execute(attach_stmt)
+            attachments = attach_result.scalars().all()
+            for att in attachments:
+                att.lead_id = primary_id
+            
+            # Mark as merged (soft delete with reason)
+            dup.is_deleted = True
+            dup.deleted_by = f"merged_into_{primary_id}"
+            dup.deleted_at = datetime.now(UTC)
+        
+        await self.db.flush()
+        await self.db.refresh(primary)
+        return primary

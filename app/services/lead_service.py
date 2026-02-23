@@ -1,12 +1,16 @@
 """
 LeadService — owns all business rules for lead lifecycle.
+Step 5 — Business Rules & Pipeline Validation
 
 Rules enforced here (NOT in AI, NOT in API layer):
 - Stage transitions must be sequential (no skipping)
 - Terminal stages (transferred, lost) cannot be changed
 - message_count can only increment
+- Mandatory fields validation per stage
+- Lost reason taxonomy enforcement
 """
 from datetime import datetime, UTC
+from typing import Dict, Set, Optional
 
 from app.models.lead import (
     Lead,
@@ -44,6 +48,70 @@ class DuplicateLeadError(Exception):
         super().__init__(f"Duplicate lead detected by {field}. Existing lead ID: {existing_id}")
 
 
+class MandatoryFieldsError(Exception):
+    """Raised when mandatory fields are missing for stage transition."""
+    def __init__(self, stage: ColdStage, missing_fields: list):
+        self.stage = stage
+        self.missing_fields = missing_fields
+        super().__init__(f"Cannot transition to {stage.value}. Missing required fields: {', '.join(missing_fields)}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Stage 5: Mandatory Fields per Stage
+# These fields are REQUIRED before a lead can advance to the next stage
+# ─────────────────────────────────────────────────────────────
+
+# Fields required to move from NEW → CONTACTED (must have at least one contact)
+STAGE_REQUIREMENTS: Dict[ColdStage, Dict[str, Set[str]]] = {
+    ColdStage.NEW: {},  # No requirements for creation
+    ColdStage.CONTACTED: {
+        "any_of": {"phone", "email", "telegram_id"}  # At least one contact method
+    },
+    ColdStage.QUALIFIED: {
+        "required": {"full_name", "business_domain"},  # Full name and domain required
+        "any_of": {"phone", "email", "telegram_id"}   # Plus contact
+    },
+    ColdStage.TRANSFERRED: {
+        "required": {"full_name", "business_domain", "ai_score"},  # Must be qualified + AI analyzed
+        "any_of": {"phone", "email", "telegram_id"}
+    },
+    ColdStage.LOST: {},  # Can lose at any stage
+}
+
+
+def validate_stage_transition(lead: Lead, new_stage: ColdStage) -> list[str]:
+    """
+    Validate that lead has all required fields for the target stage.
+    Returns list of missing fields (empty if valid).
+    """
+    if new_stage not in STAGE_REQUIREMENTS:
+        return []
+    
+    requirements = STAGE_REQUIREMENTS[new_stage]
+    missing = []
+    
+    # Check "required" fields (all must be present)
+    required_fields = requirements.get("required", set())
+    for field in required_fields:
+        value = getattr(lead, field, None)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(field)
+    
+    # Check "any_of" fields (at least one must be present)
+    any_of_fields = requirements.get("any_of", set())
+    if any_of_fields:
+        has_any = False
+        for field in any_of_fields:
+            value = getattr(lead, field, None)
+            if value is not None and (not isinstance(value, str) or value.strip()):
+                has_any = True
+                break
+        if not has_any:
+            missing.extend([f for f in any_of_fields if not getattr(lead, f, None)])
+    
+    return missing
+
+
 class LeadService:
     def __init__(self, lead_repo: LeadRepository, history_repo: "HistoryRepository"):
         self.repo = lead_repo
@@ -52,25 +120,29 @@ class LeadService:
     async def create_lead(self, data: LeadCreate) -> Lead:
         assigned_to_id = None
 
-        # Auto-assignment (round-robin by active manager load)
-        user_repo = UserRepository(self.repo.db)
-        preferred_domain = data.business_domain.value if data.business_domain else None
-        manager = await user_repo.get_round_robin_manager(preferred_domain)
-        if manager:
-            assigned_to_id = manager.id
-            manager.current_leads += 1
-            manager.last_lead_assigned_at = datetime.now(UTC)
-            await user_repo.save(manager)
+        async with self.repo.db.begin_nested():
+            # Auto-assignment (round-robin by active manager load)
+            user_repo = UserRepository(self.repo.db)
+            preferred_domain = data.business_domain.value if data.business_domain else None
+            manager = await user_repo.get_round_robin_manager(preferred_domain)
+            if manager:
+                assigned_to_id = manager.id
+                manager.current_leads += 1
+                manager.last_lead_assigned_at = datetime.now(UTC)
+                await user_repo.save(manager)
 
-        lead = Lead(
-            source=data.source,
-            business_domain=data.business_domain,
-            telegram_id=data.telegram_id,
-            stage=ColdStage.NEW,
-            message_count=0,
-            assigned_to_id=assigned_to_id,
-        )
-        lead = await self.repo.create(lead)
+            lead = Lead(
+                full_name=data.full_name,
+                phone=data.phone,
+                email=data.email,
+                source=data.source,
+                business_domain=data.business_domain,
+                telegram_id=data.telegram_id,
+                stage=ColdStage.NEW,
+                message_count=0,
+                assigned_to_id=assigned_to_id,
+            )
+            lead = await self.repo.create(lead)
         
         # Broadcast update (Step 8.2)
         await ws_manager.broadcast({
@@ -126,6 +198,8 @@ class LeadService:
     ) -> Lead:
         """
         Advance lead to next stage with strict validation.
+        Step 5 — Validates mandatory fields per stage.
+        
         Only sequential moves allowed; terminal stages are locked.
         Automatically logs the transition to HistoryRepository.
         """
@@ -148,6 +222,12 @@ class LeadService:
                 f"Cannot transition from '{current.value}' to '{new_stage.value}'. "
                 f"Expected next stage: '{COLD_STAGE_ORDER[current_idx + 1].value}'."
             )
+
+        # Step 5: Validate mandatory fields for the target stage
+        if new_stage != ColdStage.LOST:
+            missing_fields = validate_stage_transition(lead, new_stage)
+            if missing_fields:
+                raise MandatoryFieldsError(new_stage, missing_fields)
 
         # Business rule: LOST stage must always have structured reason
         if new_stage == ColdStage.LOST and lost_reason is None:
@@ -184,6 +264,12 @@ class LeadService:
 
     async def update_lead(self, lead: Lead, data: "LeadUpdate") -> Lead:
         """Update lead details."""
+        if data.full_name is not None:
+            lead.full_name = data.full_name
+        if data.phone is not None:
+            lead.phone = data.phone
+        if data.email is not None:
+            lead.email = data.email
         if data.source is not None:
             lead.source = data.source
         if data.business_domain is not None:

@@ -22,6 +22,7 @@ class BotSettings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = Field(default="")
     TELEGRAM_ADMIN_IDS: list[int] = Field(default_factory=list)
     API_SECRET_TOKEN: str = Field(default="dev_secret_token_123")
+    API_BASE_URL: str = Field(default="http://localhost:8000")
     
     # Webhook settings
     TELEGRAM_WEBHOOK_URL: Optional[str] = None

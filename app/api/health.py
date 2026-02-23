@@ -3,15 +3,14 @@ Health check endpoints for monitoring and container orchestration.
 """
 import logging
 import time
-import asyncio
-from typing import Dict, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from app.core.database import AsyncSessionLocal
+from app.core.database import get_db
 from app.core.config import settings
+from app.api.errors import build_error_payload
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ router = APIRouter(prefix="", tags=["health"])
 
 
 @router.get("/health")
-async def health_check(session: AsyncSession = Depends(lambda: AsyncSessionLocal())):
+async def health_check(session: AsyncSession = Depends(get_db)):
     """Comprehensive health check for all components."""
     start_time = time.perf_counter()
     
@@ -37,6 +36,7 @@ async def health_check(session: AsyncSession = Depends(lambda: AsyncSessionLocal
     # 2. Redis Check
     redis_status = "healthy"
     redis_latency = 0
+    redis_detail = None
     try:
         import redis.asyncio as redis
         db_redis = redis.from_url(settings.REDIS_URL)
@@ -47,14 +47,31 @@ async def health_check(session: AsyncSession = Depends(lambda: AsyncSessionLocal
     except Exception as e:
         logger.warning(f"Health check Redis error: {e}")
         redis_status = "unhealthy"
+        redis_detail = str(e)
 
-    # 3. OpenAI Config Check (no real request to save cost)
+    # 3. Celery Check
+    celery_status = "healthy"
+    celery_detail = None
+    try:
+        from app.celery.config import celery_app
+
+        insp = celery_app.control.inspect(timeout=1.0)
+        ping = insp.ping() or {}
+        if not ping:
+            celery_status = "degraded"
+            celery_detail = "No celery worker responded to ping"
+    except Exception as e:
+        celery_status = "unhealthy"
+        celery_detail = str(e)
+
+    # 4. OpenAI Config Check (no real request to save cost)
     openai_status = "healthy" if settings.OPENAI_API_KEY and "sk-" in settings.OPENAI_API_KEY else "unconfigured"
 
-    # 4. Overall status
+    # Overall status
     components = {
         "database": {"status": db_status, "latency_ms": db_latency},
-        "redis": {"status": redis_status, "latency_ms": redis_latency},
+        "redis": {"status": redis_status, "latency_ms": redis_latency, "detail": redis_detail},
+        "celery": {"status": celery_status, "detail": celery_detail},
         "openai": {"status": openai_status},
     }
     
@@ -70,22 +87,28 @@ async def health_check(session: AsyncSession = Depends(lambda: AsyncSessionLocal
 
 
 @router.get("/health/ready")
-async def readiness_check(db: AsyncSession = Depends(lambda: AsyncSessionLocal())):
+async def readiness_check(db: AsyncSession = Depends(get_db)):
     """
     Readiness check - verifies database connection.
     Used by Kubernetes for pod readiness.
     """
     try:
         # Try to execute a simple query
-        await db.execute("SELECT 1")
+        await db.execute(text("SELECT 1"))
         return {
             "status": "ready",
             "database": "connected",
         }
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
-        from fastapi import HTTPException
-        raise HTTPException(status_code=503, detail=f"Database unavailable: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=build_error_payload(
+                code="readiness_failed",
+                message="Database unavailable",
+                detail=str(e),
+            ),
+        )
 
 
 @router.get("/health/live")

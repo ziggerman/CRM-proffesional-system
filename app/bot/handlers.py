@@ -5,6 +5,7 @@ Uses ui.py for all message formatting and keyboards.py for all keyboards.
 import logging
 import os
 import re
+import uuid
 from io import BytesIO
 from typing import Optional
 
@@ -133,7 +134,7 @@ async def _get_role_header(telegram_id: str | int = None) -> dict:
         return {"X-User-Role": "ADMIN"}
 
     import httpx
-    url = f"http://localhost:8000/api/v1/users/me?telegram_id={telegram_id}"
+    url = _build_api_url(f"/api/v1/users/me?telegram_id={telegram_id}")
     auth_header = {"Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}"} if hasattr(bot_settings, 'API_SECRET_TOKEN') else {}
     
     try:
@@ -148,6 +149,55 @@ async def _get_role_header(telegram_id: str | int = None) -> dict:
     return {"X-User-Role": "AGENT"}
 
 
+def _build_request_ids() -> tuple[str, str]:
+    request_id = str(uuid.uuid4())
+    correlation_id = request_id
+    return request_id, correlation_id
+
+
+def _extract_api_error_payload(payload: dict | None, status_code: int | None = None) -> dict:
+    if isinstance(payload, dict):
+        if {"code", "message", "detail", "context"}.issubset(payload.keys()):
+            return payload
+        detail = payload.get("detail")
+        if isinstance(detail, dict) and {"code", "message", "detail", "context"}.issubset(detail.keys()):
+            return detail
+        return {
+            "code": payload.get("code", "api_error"),
+            "message": payload.get("message", "Request failed"),
+            "detail": detail if detail is not None else payload,
+            "context": payload.get("context", {}),
+        }
+    return {
+        "code": "api_error",
+        "message": "Request failed",
+        "detail": payload or f"HTTP {status_code}",
+        "context": {},
+    }
+
+
+def _api_error_text(result: dict | None, fallback: str = "Сталася помилка під час запиту.") -> str:
+    if not result:
+        return fallback
+    detail = result.get("detail")
+    if isinstance(detail, dict):
+        message = detail.get("message") or fallback
+        nested = detail.get("detail")
+        return f"{message}: {nested}" if nested else message
+    if isinstance(detail, str):
+        return detail
+    return fallback
+
+
+def _build_api_url(path: str) -> str:
+    """Build backend API URL from configurable base URL."""
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    base_url = bot_settings.API_BASE_URL.rstrip("/")
+    norm_path = path if path.startswith("/") else f"/{path}"
+    return f"{base_url}{norm_path}"
+
+
 async def _upload_file_to_api(lead_id: int, file_id: str, file_name: str, user_id: int = None) -> Optional[dict]:
     """Download file from Telegram and upload to Lead API."""
     import httpx
@@ -157,7 +207,7 @@ async def _upload_file_to_api(lead_id: int, file_id: str, file_name: str, user_i
         file = await bot_instance.get_file(file_id)
         file_content = await bot_instance.download_file(file.file_path)
         
-        url = f"http://localhost:8000/api/v1/leads/{lead_id}/attachments"
+        url = _build_api_url(f"/api/v1/leads/{lead_id}/attachments")
         headers = {"Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}"} if hasattr(bot_settings, 'API_SECRET_TOKEN') else {}
         if user_id:
             headers.update(await _get_role_header(user_id))
@@ -176,8 +226,13 @@ async def _upload_file_to_api(lead_id: int, file_id: str, file_name: str, user_i
 
 async def _api_get(path: str, user_id: int = None) -> Optional[dict]:
     import httpx
-    url = f"http://localhost:8000{path}"
-    headers = {"Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}"} if hasattr(bot_settings, 'API_SECRET_TOKEN') else {}
+    url = _build_api_url(path)
+    request_id, correlation_id = _build_request_ids()
+    headers = {
+        "Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}",
+        "X-Request-ID": request_id,
+        "X-Correlation-ID": correlation_id,
+    } if hasattr(bot_settings, 'API_SECRET_TOKEN') else {"X-Request-ID": request_id, "X-Correlation-ID": correlation_id}
     if user_id:
         headers.update(await _get_role_header(user_id))
         
@@ -186,28 +241,52 @@ async def _api_get(path: str, user_id: int = None) -> Optional[dict]:
             response = await client.get(url, headers=headers, timeout=10.0)
             if response.status_code == 200:
                 return response.json()
-            return {"error": True, "detail": response.json().get("detail", "Unknown error"), "status": response.status_code}
+            payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {"detail": response.text}
+            parsed = _extract_api_error_payload(payload, response.status_code)
+            logger.warning("API GET failed", extra={"path": path, "status": response.status_code, "request_id": request_id, "correlation_id": correlation_id, "error": parsed})
+            return {"error": True, "detail": parsed, "status": response.status_code}
         except Exception as e:
-            logger.error(f"API GET {path} error: {e}")
-    return {"error": True, "detail": "Connection error"}
+            logger.error(f"API GET {path} error: {e}", extra={"request_id": request_id, "correlation_id": correlation_id})
+    return {"error": True, "detail": {"code": "connection_error", "message": "Connection error", "detail": "Unable to reach backend API", "context": {"path": path, "request_id": request_id, "correlation_id": correlation_id}}}
 
 
 async def _api_post(path: str, data: dict, user_id: int = None) -> Optional[dict]:
     import httpx
-    url = f"http://localhost:8000{path}"
-    headers = {"Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}"} if hasattr(bot_settings, 'API_SECRET_TOKEN') else {}
+    url = _build_api_url(path)
+    request_id, correlation_id = _build_request_ids()
+    headers = {
+        "Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}",
+        "X-Request-ID": request_id,
+        "X-Correlation-ID": correlation_id,
+    } if hasattr(bot_settings, 'API_SECRET_TOKEN') else {"X-Request-ID": request_id, "X-Correlation-ID": correlation_id}
     if user_id:
         headers.update(await _get_role_header(user_id))
+
+    def _extract_error_detail(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = payload.get("detail")
+                if isinstance(detail, str):
+                    return detail
+                if detail is not None:
+                    return str(detail)
+            return response.text or f"HTTP {response.status_code}"
+        except Exception:
+            return response.text or f"HTTP {response.status_code}"
         
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(url, json=data, headers=headers, timeout=10.0)
             if response.status_code in (200, 201):
                 return response.json()
-            return {"error": True, "detail": response.json().get("detail", "Unknown error"), "status": response.status_code}
+            payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {"detail": _extract_error_detail(response)}
+            parsed = _extract_api_error_payload(payload, response.status_code)
+            logger.warning("API POST failed", extra={"path": path, "status": response.status_code, "request_id": request_id, "correlation_id": correlation_id, "error": parsed})
+            return {"error": True, "detail": parsed, "status": response.status_code}
         except Exception as e:
-            logger.error(f"API POST {path} error: {e}")
-    return {"error": True, "detail": "Connection error"}
+            logger.error(f"API POST {path} error: {e}", extra={"request_id": request_id, "correlation_id": correlation_id})
+    return {"error": True, "detail": {"code": "connection_error", "message": "Connection error", "detail": "Unable to reach backend API", "context": {"path": path, "request_id": request_id, "correlation_id": correlation_id}}}
 
 
 def is_valid_email(email: str) -> bool:
@@ -223,8 +302,13 @@ def is_valid_phone(phone: str) -> bool:
 
 async def _api_patch(path: str, data: dict, user_id: int = None) -> Optional[dict]:
     import httpx
-    url = f"http://localhost:8000{path}"
-    headers = {"Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}"} if hasattr(bot_settings, 'API_SECRET_TOKEN') else {}
+    url = _build_api_url(path)
+    request_id, correlation_id = _build_request_ids()
+    headers = {
+        "Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}",
+        "X-Request-ID": request_id,
+        "X-Correlation-ID": correlation_id,
+    } if hasattr(bot_settings, 'API_SECRET_TOKEN') else {"X-Request-ID": request_id, "X-Correlation-ID": correlation_id}
     if user_id:
         headers.update(await _get_role_header(user_id))
         
@@ -233,16 +317,24 @@ async def _api_patch(path: str, data: dict, user_id: int = None) -> Optional[dic
             response = await client.patch(url, json=data, headers=headers, timeout=10.0)
             if response.status_code == 200:
                 return response.json()
-            return {"error": True, "detail": response.json().get("detail", "Unknown error"), "status": response.status_code}
+            payload = response.json() if response.headers.get("content-type", "").startswith("application/json") else {"detail": response.text}
+            parsed = _extract_api_error_payload(payload, response.status_code)
+            logger.warning("API PATCH failed", extra={"path": path, "status": response.status_code, "request_id": request_id, "correlation_id": correlation_id, "error": parsed})
+            return {"error": True, "detail": parsed, "status": response.status_code}
         except Exception as e:
-            logger.error(f"API PATCH {path} error: {e}")
-    return {"error": True, "detail": "Connection error"}
+            logger.error(f"API PATCH {path} error: {e}", extra={"request_id": request_id, "correlation_id": correlation_id})
+    return {"error": True, "detail": {"code": "connection_error", "message": "Connection error", "detail": "Unable to reach backend API", "context": {"path": path, "request_id": request_id, "correlation_id": correlation_id}}}
 
 
 async def _api_delete(path: str, user_id: int = None) -> bool:
     import httpx
-    url = f"http://localhost:8000{path}"
-    headers = {"Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}"} if hasattr(bot_settings, 'API_SECRET_TOKEN') else {}
+    url = _build_api_url(path)
+    request_id, correlation_id = _build_request_ids()
+    headers = {
+        "Authorization": f"Bearer {bot_settings.API_SECRET_TOKEN}",
+        "X-Request-ID": request_id,
+        "X-Correlation-ID": correlation_id,
+    } if hasattr(bot_settings, 'API_SECRET_TOKEN') else {"X-Request-ID": request_id, "X-Correlation-ID": correlation_id}
     if user_id:
         headers.update(await _get_role_header(user_id))
         
@@ -251,7 +343,7 @@ async def _api_delete(path: str, user_id: int = None) -> bool:
             response = await client.delete(url, headers=headers, timeout=10.0)
             return response.status_code in (200, 204)
         except Exception as e:
-            logger.error(f"API DELETE {path} error: {e}")
+            logger.error(f"API DELETE {path} error: {e}", extra={"request_id": request_id, "correlation_id": correlation_id})
     return False
 
 
@@ -491,7 +583,7 @@ async def cmd_ai_assist(message: Message, state: FSMContext):
     )
 
 
-@router.message(AIAssistantState.waiting_for_query)
+@router.message(F.text, AIAssistantState.waiting_for_query)
 async def handle_ai_query(message: Message, state: FSMContext):
     """Handle AI Assistant queries."""
     query = message.text or ""
@@ -509,8 +601,16 @@ async def handle_ai_query(message: Message, state: FSMContext):
     
     # Process query with AI (Ukrainian responses)
     response = await ai_assistant.process_query(query, leads)
-    
-    await message.answer(response, parse_mode="HTML")
+
+    # Safe send: try HTML, fallback to plain text if markup fails
+    try:
+        await message.answer(response, parse_mode="HTML")
+    except Exception as send_err:
+        logger.warning(f"Failed to send AI response with HTML, fallback to plain: {send_err}")
+        try:
+            await message.answer(response, parse_mode=None)
+        except Exception:
+            await message.answer("⚠️ Помилка відправки відповіді. Спробуйте ще раз пізніше.", parse_mode="HTML")
 
 
 @router.message(F.voice, AIAssistantState.waiting_for_query)
@@ -560,7 +660,14 @@ async def handle_ai_voice_query(message: Message, state: FSMContext):
 
         leads = await get_leads_via_api(user_id=message.from_user.id)
         response = await ai_assistant.process_query(query_text, leads)
-        await message.answer(response, parse_mode="HTML")
+        try:
+            await message.answer(response, parse_mode="HTML")
+        except Exception as send_err:
+            logger.warning(f"Failed to send AI voice response with HTML, fallback to plain: {send_err}")
+            try:
+                await message.answer(response, parse_mode=None)
+            except Exception:
+                await message.answer("⚠️ Помилка відправки відповіді. Спробуйте ще раз пізніше.", parse_mode="HTML")
     except Exception as e:
         logger.error(f"AI voice query processing error: {e}")
         await message.answer(
@@ -610,6 +717,15 @@ async def voice_confirm_create(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     lead_payload = data.get("pending_lead_data", {})
+    if not lead_payload:
+        await state.clear()
+        await callback.message.answer(
+            "⚠️ <b>Дані для створення ліда втрачено</b>\n\n"
+            "Будь ласка, повторіть голосову команду створення ліда.",
+            parse_mode="HTML"
+        )
+        return
+
     lead = await _api_post("/api/v1/leads", lead_payload, user_id=callback.from_user.id)
     await state.clear()
     if lead and "error" not in lead:
@@ -623,7 +739,7 @@ async def voice_confirm_create(callback: CallbackQuery, state: FSMContext):
             parse_mode="HTML"
         )
     else:
-        detail = lead.get("detail", "Невідома помилка") if isinstance(lead, dict) else "Невідома помилка"
+        detail = _api_error_text(lead, "Невідома помилка") if isinstance(lead, dict) else "Невідома помилка"
         await callback.message.answer(
             f"⚠️ <b>Помилка створення ліда</b>\n{detail}",
             parse_mode="HTML"
@@ -660,11 +776,22 @@ async def voice_confirm_note(callback: CallbackQuery, state: FSMContext):
     import re
     match = re.search(r"voice_confirm_note_(\d+)", callback.data)
     if not match:
+        await callback.answer("Некоректний формат команди", show_alert=True)
         return
     await callback.answer()
     data = await state.get_data()
     note_payload = data.get("pending_note_data", {})
     lead_id = int(match.group(1))
+
+    if not note_payload or not note_payload.get("content"):
+        await state.clear()
+        await callback.message.answer(
+            "⚠️ <b>Дані нотатки втрачено</b>\n\n"
+            "Повторіть команду або додайте нотатку вручну з картки ліда.",
+            parse_mode="HTML"
+        )
+        return
+
     result = await _api_post(f"/api/v1/leads/{lead_id}/notes", note_payload, user_id=callback.from_user.id)
     await state.clear()
     if result and "error" not in result:
@@ -677,7 +804,10 @@ async def voice_confirm_note(callback: CallbackQuery, state: FSMContext):
             parse_mode="HTML"
         )
     else:
-        await callback.message.answer("⚠️ Не вдалося додати нотатку.", parse_mode="HTML")
+        await callback.message.answer(
+            f"⚠️ Не вдалося додати нотатку.\n{_api_error_text(result)}",
+            parse_mode="HTML"
+        )
 
 
 @router.callback_query(F.data.regexp(r"^voice_edit_note_(\d+)$"))
@@ -686,6 +816,7 @@ async def voice_edit_note(callback: CallbackQuery, state: FSMContext):
     import re
     match = re.search(r"voice_edit_note_(\d+)", callback.data)
     if not match:
+        await callback.answer("Некоректний формат команди", show_alert=True)
         return
     lead_id = int(match.group(1))
     await callback.answer("Відкриваю форму нотатки...")
@@ -1518,7 +1649,7 @@ async def handle_sale_stage_change(callback: CallbackQuery, state: FSMContext):
         await callback.answer(f"✅ Sale #{sale_id} updated to {new_stage}!", show_alert=True)
         await show_sale_detail(callback, sale_id)
     else:
-        await callback.answer(f"⚠️ Failed: {res.get('detail', 'Unknown error')}", show_alert=True)
+        await callback.answer(f"⚠️ Failed: {_api_error_text(res, 'Unknown error')}", show_alert=True)
 
 
 @router.message(SaleManagementState.updating_notes)
@@ -1527,6 +1658,7 @@ async def handle_sale_input(message: Message, state: FSMContext):
     sale_id = data.get("edit_sale_id")
     if not sale_id:
         await state.clear()
+        await message.answer("⚠️ Сесія редагування sale втрачена. Відкрийте картку sale ще раз.", parse_mode="HTML")
         return
 
     text = message.text or ""
@@ -1538,9 +1670,12 @@ async def handle_sale_input(message: Message, state: FSMContext):
     else:
         payload["notes"] = text
 
-    await _api_patch(f"/api/v1/sales/{sale_id}", payload, user_id=message.from_user.id)
+    result = await _api_patch(f"/api/v1/sales/{sale_id}", payload, user_id=message.from_user.id)
     await state.clear()
-    await message.answer(f"✅ Sale #{sale_id} updated.", parse_mode="HTML")
+    if result and "error" not in result:
+        await message.answer(f"✅ Sale #{sale_id} updated.", parse_mode="HTML")
+    else:
+        await message.answer(f"⚠️ Не вдалося оновити Sale #{sale_id}.\n{_api_error_text(result)}", parse_mode="HTML")
 
 
 @router.callback_query(F.data == "goto_newlead")
@@ -2166,16 +2301,35 @@ async def handle_note_text(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("ntcf"), AddNoteState.waiting_for_confirm)
+@router.callback_query(F.data.startswith("ntcf"))
 async def handle_note_confirm(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
-    action = parts[1] # s, e, d
+    if len(parts) < 2:
+        await callback.answer("Некоректна команда", show_alert=True)
+        return
+
+    action = parts[1]  # s, e, d
     lead_id = parts[0].replace("ntcf", "")
     
     data = await state.get_data()
     text = data.get("pending_note_text")
+
+    # FSM state may be lost after timeout/restart; recover gracefully.
+    if action in {"s", "e"} and not text:
+        await state.set_state(AddNoteState.waiting_for_text)
+        await state.update_data(note_lead_id=int(lead_id))
+        await safe_edit(
+            callback,
+            ui.format_error(
+                "Дані нотатки втрачено.",
+                "Будь ласка, введіть текст нотатки ще раз і натисніть Save."
+            ),
+            get_note_cancel_keyboard(int(lead_id))
+        )
+        return
     
     if action == "s":
+        logger.info(f"Saving note for lead #{lead_id} via callback ntcf")
         await callback.answer("Saving...")
         result = await _api_post(f"/api/v1/leads/{lead_id}/notes", {"content": text}, user_id=callback.from_user.id)
         await state.clear()
@@ -2183,6 +2337,7 @@ async def handle_note_confirm(callback: CallbackQuery, state: FSMContext):
             await safe_edit(callback, ui.format_success(f"Note saved to Lead #{lead_id}."), get_back_keyboard(f"lvw{lead_id}"))
         else:
             error_detail = result.get("detail") if result else "API error"
+            logger.warning(f"Failed to save note for lead #{lead_id}: {error_detail}")
             await safe_edit(callback, ui.format_error(f"Failed to save note.", error_detail), get_back_keyboard(f"led{lead_id}_ntm"))
             
     elif action == "e":
@@ -2539,6 +2694,15 @@ async def proceed_to_confirm_creation(msg: Message, state: FSMContext):
 @router.callback_query(F.data == "cf_create", LeadCreationState.confirm)
 async def finalize_lead_creation(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
+    if not data:
+        await state.clear()
+        await safe_edit(
+            callback,
+            ui.format_error("Дані створення ліда втрачено.", "Почніть створення ліда ще раз."),
+            get_retry_keyboard("goto_newlead", "goto_menu")
+        )
+        return
+
     await callback.answer("Creating lead...")
     # Inject telegram_id
     data["telegram_id"] = str(callback.from_user.id)
@@ -2560,7 +2724,7 @@ async def finalize_lead_creation(callback: CallbackQuery, state: FSMContext):
         builder.adjust(1)
         await safe_edit(callback, text, builder.as_markup())
     else:
-        error_detail = lead.get("detail", "Unknown error") if isinstance(lead, dict) else "Unknown error"
+        error_detail = _api_error_text(lead, "Unknown error") if isinstance(lead, dict) else "Unknown error"
         await safe_edit(callback, ui.format_error("Failed to create lead.", error_detail), get_retry_keyboard("goto_newlead", "goto_menu"))
 
 
@@ -2781,7 +2945,7 @@ async def confirm_paste_lead(callback: CallbackQuery, state: FSMContext):
         builder.adjust(1)
         await safe_edit(callback, text, builder.as_markup())
     else:
-        error_msg = lead.get("detail", "Unknown error") if lead else "API error"
+        error_msg = _api_error_text(lead, "API error") if lead else "API error"
         await safe_edit(callback, ui.format_error(f"Failed to create lead: {error_msg}"), get_back_keyboard("goto_paste_lead"))
 
 

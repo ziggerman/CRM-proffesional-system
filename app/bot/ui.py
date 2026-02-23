@@ -498,6 +498,19 @@ def format_note_prompt(lead_id: int) -> str:
     )
 
 
+def format_note_confirm(lead_id: int, text: str) -> str:
+    """Preview note content before save/edit/discard actions."""
+    safe_text = text or ""
+    if len(safe_text) > 500:
+        safe_text = safe_text[:500] + "..."
+    return (
+        f"📝 <b>CONFIRM NOTE</b>  —  Lead #{lead_id}\n\n"
+        "Перевірте текст перед збереженням:\n\n"
+        f"<i>{safe_text}</i>\n\n"
+        "Оберіть дію нижче:"
+    )
+
+
 def format_advanced_stats(data: dict) -> str:
     """Format the deep analytical report."""
     total = data.get("total_leads", 0)

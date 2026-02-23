@@ -38,7 +38,7 @@ The system follows a clean, modular architecture designed for scalability and ma
 
 ## 🎤 Voice Mode - Hands-Free CRM
 
-The Telegram bot supports **voice commands** for hands-free operation:
+The Telegram bot supports **Copilot mode (text + voice)** for hands-free operation:
 
 ### Features
 - **Voice Message Transcription**: Speak naturally, AI understands
@@ -53,6 +53,42 @@ The Telegram bot supports **voice commands** for hands-free operation:
 | "statistics" | Show statistics |
 | "find [name]" | Search for lead |
 | Voice message | Auto-transcribe & process |
+
+---
+
+## 🤖 Copilot Interactive Flows (NEW)
+
+Copilot now supports structured, interactive AI flows tied to the shared backend database.
+
+### 1) Add Lead Flow (Interactive Buttons)
+When user asks to add a lead (text or voice), the bot prepares a lead draft and shows actions:
+
+- ✅ **Зберегти** — saves lead to DB (`POST /api/v1/leads`)
+- ✏️ **Редагувати** — opens editable draft flow
+- ❓ **Змінити питання** — asks clarifying follow-up
+
+This gives a safe human-in-the-loop confirmation before write operations.
+
+### 2) Analyze Lead Flow (Next-Step Navigation)
+When user asks to analyze a lead (`проаналізуй ліда #ID`), the bot returns AI analysis and shows next-step buttons:
+
+- 📞 `Contacted`
+- ✅ `Qualify`
+- 🚀 `Transfer`
+- 📝 `Додати нотатку`
+- ➡️ `Наступне питання`
+- 📄 `Картка ліда`
+
+Buttons immediately execute or guide the next action against the same shared CRM data.
+
+### 3) Clarification & Safety Logic
+Copilot includes NLU safeguards:
+
+- **Low confidence gate**: vague commands trigger clarification instead of risky actions.
+- **Slot-filling** (`missing_fields`): bot asks only for required missing fields.
+  - create: at least one of name/phone/email
+  - analyze: lead ID is required
+  - note: lead ID + note text
 
 ### Voice Transcription Options
 Priority order:
@@ -170,8 +206,7 @@ python run_bot.py
 - **💰 Sales** - Sales pipeline
 - **📊 Stats** - View statistics
 - **➕ New Lead** - Create lead
-- **🎤 Voice** - Voice command mode
-- **🤖 AI Assist** - AI assistant queries
+- **🤖 Copilot** - Unified text + voice AI mode
 - **⚡ Quick** - Quick actions
 
 ---
@@ -182,7 +217,7 @@ python run_bot.py
 ```env
 # Required
 TELEGRAM_BOT_TOKEN=your_bot_token
-OPENAI_API_KEY=sk-...
+OPENAI_API_KEY=your-openai-api-key-here
 API_SECRET_TOKEN=your_secret
 
 # Optional - Voice

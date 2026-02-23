@@ -287,12 +287,94 @@ class UnifiedAIService:
         }
         lead_data = {k: v for k, v in lead_data.items() if v is not None}
 
+        mapped_action = action_map.get(action.intent, "ai_query")
+        if action.intent == Intent.UNKNOWN:
+            mapped_action = None
+        ui_hint = self._build_ui_hint(mapped_action, lead_data, action.confidence)
+        missing_fields = self._detect_missing_fields(mapped_action, lead_data)
+
         return {
-            "action": action_map.get(action.intent, "ai_query"),
+            "action": mapped_action,
             "query": action.entities.search_query or text,
             "lead_data": lead_data,
             "confidence": action.confidence,
             "raw_text": text,
+            "ui_hint": ui_hint,
+            "missing_fields": missing_fields,
+        }
+
+    def _detect_missing_fields(self, action: Optional[str], lead_data: dict) -> list[str]:
+        if action == "create":
+            if not (lead_data.get("name") or lead_data.get("phone") or lead_data.get("email")):
+                return ["name_or_phone_or_email"]
+            return []
+        if action == "analyze":
+            return [] if lead_data.get("lead_id") else ["lead_id"]
+        if action == "note":
+            missing = []
+            if not lead_data.get("lead_id"):
+                missing.append("lead_id")
+            if not lead_data.get("content"):
+                missing.append("content")
+            return missing
+        return []
+
+    def _build_ui_hint(self, action: str, lead_data: dict, confidence: float) -> dict:
+        """Decide if interactive buttons should be rendered for AI response."""
+        risk_actions = {"delete", "edit"}
+
+        if confidence < 0.45:
+            return {
+                "kind": "clarify",
+                "show_buttons": False,
+                "reason": "low_confidence",
+            }
+
+        if action == "create":
+            has_min_data = bool(lead_data.get("name") or lead_data.get("phone") or lead_data.get("email"))
+            if has_min_data and confidence >= 0.5:
+                return {
+                    "kind": "lead_draft_actions",
+                    "show_buttons": True,
+                    "reason": "create_with_min_data",
+                }
+            return {
+                "kind": "clarify",
+                "show_buttons": False,
+                "reason": "create_incomplete_or_low_confidence",
+            }
+
+        if action == "analyze":
+            if lead_data.get("lead_id"):
+                return {
+                    "kind": "analysis_next_steps",
+                    "show_buttons": True,
+                    "reason": "analysis_with_target",
+                }
+            return {
+                "kind": "clarify",
+                "show_buttons": False,
+                "reason": "analysis_without_target",
+            }
+
+        if action in risk_actions:
+            return {
+                "kind": "confirm_required",
+                "show_buttons": True,
+                "reason": "risk_action",
+            }
+
+        if action in {"list", "stats", "search", "notes", "sales"}:
+            return {
+                "kind": "none",
+                "show_buttons": False,
+                "reason": "informational",
+            }
+
+        return {
+            "kind": "none",
+            "show_buttons": False,
+            "reason": "fallback",
         }
     
     def _extract_lead_id(self, text: str) -> int | None:

@@ -13,8 +13,24 @@ from app.bot.ui import STAGE_META, SOURCE_META, DOMAIN_META
 # ─────────────────────────────────────────────────────────────
 
 def get_main_menu_keyboard() -> None:
-    """Main menu keyboard disabled."""
-    return None
+    """Static reply keyboard for quick access from chat input area."""
+    kb = ReplyKeyboardBuilder()
+    kb.row(
+        KeyboardButton(text="📋 Leads"),
+        KeyboardButton(text="💰 Sales"),
+    )
+    kb.row(
+        KeyboardButton(text="📊 Stats"),
+        KeyboardButton(text="➕ New Lead"),
+    )
+    kb.row(
+        KeyboardButton(text="🤖 Copilot"),
+        KeyboardButton(text="⚡ Quick"),
+    )
+    kb.row(
+        KeyboardButton(text="⚙️ Settings"),
+    )
+    return kb.as_markup(resize_keyboard=True, is_persistent=True)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -65,6 +81,30 @@ def get_paste_confirm_keyboard() -> InlineKeyboardMarkup:
     builder.add(InlineKeyboardButton(text="✏️ Edit", callback_data="paste_edit"))
     builder.add(InlineKeyboardButton(text="❌ Cancel", callback_data="goto_menu"))
     builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
+def get_ai_lead_draft_keyboard() -> InlineKeyboardMarkup:
+    """AI draft lead actions: save/edit/rephrase."""
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="✅ Зберегти", callback_data="ai_lead_save"))
+    builder.add(InlineKeyboardButton(text="✏️ Редагувати", callback_data="ai_lead_edit"))
+    builder.add(InlineKeyboardButton(text="❓ Змінити питання", callback_data="ai_lead_rephrase"))
+    builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
+def get_ai_analysis_next_steps_keyboard(lead_id: int) -> InlineKeyboardMarkup:
+    """Next-step navigation after AI lead analysis."""
+    lid = str(lead_id)
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="📞 Contacted", callback_data=f"ai_an_step_{lid}_c"))
+    builder.add(InlineKeyboardButton(text="✅ Qualify", callback_data=f"ai_an_step_{lid}_q"))
+    builder.add(InlineKeyboardButton(text="🚀 Transfer", callback_data=f"ai_an_step_{lid}_t"))
+    builder.add(InlineKeyboardButton(text="📝 Додати нотатку", callback_data=f"ai_an_step_{lid}_n"))
+    builder.add(InlineKeyboardButton(text="➡️ Наступне питання", callback_data=f"ai_an_nextq_{lid}"))
+    builder.add(InlineKeyboardButton(text="📄 Картка ліда", callback_data=f"lvw{lid}"))
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
 
